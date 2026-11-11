@@ -27,9 +27,9 @@ classifiers = [
 dependencies = []
 
 [project.urls]
-Homepage = "https://github.com/mousecfg/mousecfg"
-Repository = "https://github.com/mousecfg/mousecfg"
-Issues = "https://github.com/mousecfg/mousecfg/issues"
+Homepage = "https://github.com/derekvlad/mousecfg"
+Repository = "https://github.com/derekvlad/mousecfg"
+Issues = "https://github.com/derekvlad/mousecfg/issues"
 
 
 # Everything below is Linux-only on purpose: hidraw, udev, systemd --user, evdev/uinput.

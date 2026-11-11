@@ -348,7 +348,7 @@ PYTHONPATH=src python3 scripts/evdev-selftest.py
 ## Разработка
 
 ```sh
-git clone https://github.com/mousecfg/mousecfg
+git clone https://github.com/derekvlad/mousecfg
 cd mousecfg
 python3 -m venv --system-site-packages .venv
 .venv/bin/pip install -e ".[dev,input]"
