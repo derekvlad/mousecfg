@@ -1,0 +1,17 @@
+# Доступ к evdev-узлам для ремапа кнопок.
+#
+# Перехват кнопки (EVIOCGRAB) требует чтения соответствующего
+# /dev/input/eventN. Правило даёт доступ владельцу активной сессии — то
+# же, что уже есть у обычной мыши в большинстве дистрибутивов.
+#
+# Установка:
+#   sudo install -m 0644 data/70-mousecfg-input.rules /etc/udev/rules.d/
+#   sudo udevadm control --reload && sudo udevadm trigger --subsystem-match=input
+#
+# Вместе с ним нужно правило data/71-mousecfg-virtual.rules: оно даёт сессии
+# доступ к виртуальному устройству, через которое ретранслируются события.
+#
+# Если правило по какой-то причине неприменимо, добавьте пользователя в
+# группу input: sudo usermod -aG input $USER (потребуется перелогин).
+
+ACTION=="add", SUBSYSTEM=="input", KERNEL=="event*", ENV{ID_INPUT_MOUSE}=="1", TAG+="uaccess"

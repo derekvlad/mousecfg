@@ -1,0 +1,5 @@
+"""mousecfg — профили мышей на стороне хоста, без записи в память устройства."""
+
+from __future__ import annotations
+
+__version__ = "0.1.0.dev0"

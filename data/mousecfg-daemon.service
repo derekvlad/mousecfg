@@ -1,0 +1,28 @@
+[Unit]
+Description=mousecfg daemon: host-side mouse profiles (nothing is written to onboard memory)
+# Демон нужен только в графической сессии: там есть активное окно и ACL на
+# hidraw/uinput. Без сессии запускать его нечего.
+PartOf=graphical-session.target
+After=graphical-session.target
+
+[Service]
+Type=simple
+# Путь к entry point из виртуального окружения проекта. Если вы ставили
+# пакет иначе, поправьте строку (systemd --user не наследует PATH из
+# shell-профиля, поэтому нужен абсолютный путь).
+ExecStart=%h/mousecfg/.venv/bin/mousecfg-daemon
+# Перезапуск при падении: смена report rate приводит к переподключению USB,
+# и демон должен пережить временное исчезновение устройства.
+Restart=on-failure
+RestartSec=2
+# Журнал — в stdout/stderr, его собирает journalctl.
+StandardOutput=journal
+StandardError=journal
+
+# Демон работает в пользовательской сессии: hidraw через ACL (uaccess),
+# uinput для макросов. Root не нужен и не запрашивается.
+NoNewPrivileges=yes
+PrivateTmp=yes
+
+[Install]
+WantedBy=graphical-session.target

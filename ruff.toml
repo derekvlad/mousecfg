@@ -1,0 +1,12 @@
+line-length = 120
+target-version = "py311"
+
+[lint]
+select = ["E", "F", "W", "I", "UP", "B", "SIM", "ARG", "PTH", "RET", "TID"]
+ignore = [
+    "E501",   # длина строк — забота форматтера
+    "B008",   # argparse-паттерны
+]
+
+[lint.per-file-ignores]
+"tests/*" = ["ARG001", "ARG002"]

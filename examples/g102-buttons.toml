@@ -1,0 +1,39 @@
+version = 1
+
+# Пример профиля с кнопками и макросами.
+#
+# Такой профиль применяется через evdev: движение и колесо ретранслируются
+# через uinput, а указанные кнопки подменяются. Мышь при этом ничего о
+# макросе не знает — он исполняется на хосте.
+#
+# Запуск:
+#   sudo install -m 0644 data/70-mousecfg-input.rules /etc/udev/rules.d/
+#   sudo install -m 0644 data/71-mousecfg-virtual.rules /etc/udev/rules.d/
+#   sudo udevadm control --reload && sudo udevadm trigger --subsystem-match=input
+#   mousecfg run-profile examples/g102-buttons.toml
+
+[[device]]
+id = "logitech-g102-lightsync"
+
+[[profile]]
+id = "desktop"
+name = "Рабочий стол"
+dpi = 1600
+report_rate = "1000Hz"
+
+[profile.buttons]
+# Кнопка "назад" остаётся навигацией, но уже под нашим контролем.
+"side1" = "browser-back"
+# Кнопка "вперёд" запускает макрос.
+"side2" = { macro = "open-terminal" }
+# Средняя кнопка — копирование.
+"middle" = "copy"
+
+[[macro]]
+id = "open-terminal"
+name = "Открыть терминал"
+interval_ms = 30
+steps = [
+    { tap = "ctrl+alt+t", delay_ms = 250 },
+    { tap = "Enter" },
+]

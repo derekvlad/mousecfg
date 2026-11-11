@@ -1,0 +1,15 @@
+# Доступ к виртуальному устройству mousecfg.
+#
+# Ремап кнопок грабит физическую мышь (EVIOCGRAB) и ретранслирует движение,
+# колесо и непривязанные кнопки через uinput. Без этого правила сессия не
+# увидит виртуальное устройство: у uinput-узла нет ID_SEAT, поэтому общий
+# механизм uaccess (73-seat-late.rules) его не подхватывает.
+#
+# Номер файла важен: правило должно сработать раньше 73-seat-late.rules,
+# иначе тег uaccess не превратится в ACL.
+#
+# Установка:
+#   sudo install -m 0644 data/71-mousecfg-virtual.rules /etc/udev/rules.d/
+#   sudo udevadm control --reload
+
+SUBSYSTEM=="input", KERNEL=="event*", ATTRS{name}=="mousecfg virtual input", TAG+="uaccess"

@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Иконка mousecfg: компьютерная мышь на подложке. Простая геометрия,
+  чтобы читалась в маленьком размере. Лицензия — GPL-3.0-or-later,
+  как и весь проект.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128">
+  <defs>
+    <linearGradient id="body" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#f5f6fa"/>
+      <stop offset="1" stop-color="#c9cde0"/>
+    </linearGradient>
+  </defs>
+  <rect width="128" height="128" rx="24" ry="24" fill="#3584e4"/>
+  <g transform="translate(64 68)">
+    <path d="M-23,-38 C-23,-50 -10,-56 0,-56 C10,-56 23,-50 23,-38 L23,22 C23,40 12,50 0,50 C-12,50 -23,40 -23,22 Z"
+          fill="url(#body)" stroke="#1c2b45" stroke-width="4" stroke-linejoin="round"/>
+    <line x1="0" y1="-56" x2="0" y2="-14" stroke="#1c2b45" stroke-width="4" stroke-linecap="round"/>
+    <rect x="-5" y="-40" width="10" height="18" rx="5" fill="#3584e4"/>
+    <path d="M-23,2 L23,2" stroke="#1c2b45" stroke-width="4" stroke-linecap="round"/>
+  </g>
+</svg>

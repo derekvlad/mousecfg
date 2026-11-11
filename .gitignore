@@ -1,0 +1,21 @@
+# Виртуальные окружения и сборка
+.venv/
+venv/
+build/
+dist/
+*.egg-info/
+
+# Python-кеши и артефакты инструментов
+__pycache__/
+*.py[cod]
+*.so
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# Локальные настройки и редакторы
+*.swp
+.idea/
+.vscode/

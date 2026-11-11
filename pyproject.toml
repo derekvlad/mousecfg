@@ -1,0 +1,58 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "mousecfg"
+version = "0.1.0.dev0"
+description = "Host-side profile manager for gaming mice (Linux). Profiles live on the host; nothing is written to the mouse onboard memory."
+readme = "README.md"
+requires-python = ">=3.11"
+license = "GPL-3.0-or-later"
+license-files = ["LICENSE"]
+authors = [{ name = "mousecfg contributors" }]
+keywords = ["logitech", "hidpp", "mouse", "gaming", "dpi", "linux", "evdev", "uinput"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: X11 Applications :: GTK",
+    "Intended Audience :: End Users/Desktop",
+    "License :: OSI Approved :: GNU General Public License v3 or later (GPLv3+)",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: System :: Hardware",
+    "Topic :: Utilities",
+]
+dependencies = []
+
+[project.urls]
+Homepage = "https://github.com/mousecfg/mousecfg"
+Repository = "https://github.com/mousecfg/mousecfg"
+Issues = "https://github.com/mousecfg/mousecfg/issues"
+
+
+# Everything below is Linux-only on purpose: hidraw, udev, systemd --user, evdev/uinput.
+[project.optional-dependencies]
+gui = ["PyGObject>=3.42"]
+# evdev нужен для ремапа кнопок и макросов; без него работают только DPI/rate.
+input = ["evdev>=1.6"]
+dev = ["pytest>=8", "ruff>=0.6", "evdev>=1.6"]
+
+[project.scripts]
+mousecfg = "mousecfg.cli:main"
+mousecfg-daemon = "mousecfg.daemon_entry:main"
+
+[project.gui-scripts]
+mousecfg-gui = "mousecfg.gui.app:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+# udev-правила и unit-файл лежат в корне репозитория: их ставит человек
+# (нужен root), поэтому в пакет их не заворачиваем.
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"

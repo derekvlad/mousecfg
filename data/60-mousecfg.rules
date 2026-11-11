@@ -1,0 +1,19 @@
+# Доступ к hidraw и uinput для пользовательской сессии.
+#
+# Проект общается с мышью напрямую через /dev/hidraw*, а макросы отправляет
+# через /dev/uinput. Демон работает как пользовательский сервис, поэтому
+# нужен только ACL для активной сессии — без root и без группы-посредника.
+#
+# Установка:
+#   sudo install -m 0644 data/60-mousecfg.rules /etc/udev/rules.d/
+#   sudo udevadm control --reload && sudo udevadm trigger --subsystem-match=hidraw
+
+# HID++ интерфейс (interface 1) любых Logitech-устройств.
+SUBSYSTEM=="hidraw", ATTRS{idVendor}=="046d", ATTRS{bInterfaceNumber}=="01", TAG+="uaccess"
+
+# Точечно для проверенной модели G102 LIGHTSYNC (046d:c092), чтобы проект
+# работал даже там, где остальные Logitech-устройства не нужны.
+SUBSYSTEM=="hidraw", ATTRS{idVendor}=="046d", ATTRS{idProduct}=="c092", TAG+="uaccess"
+
+# uinput — для макросов и ремапа кнопок на стороне хоста.
+KERNEL=="uinput", SUBSYSTEM=="misc", TAG+="uaccess", OPTIONS+="static_node=uinput"

@@ -1,0 +1,14 @@
+[Desktop Entry]
+Type=Application
+Name=mousecfg
+GenericName=Mouse profile manager
+Comment=Host-side profiles for gaming mice; nothing is written to onboard memory
+Comment[ru]=Профили игровых мышей на стороне хоста; во встроенную память мыши ничего не пишется
+Exec=mousecfg-gui %u
+Icon=io.github.mousecfg.MouseCfg
+Terminal=false
+Categories=Settings;HardwareSettings;
+Keywords=mouse;gaming;dpi;hidpp;logitech;mousecfg;
+Keywords[ru]=мышь;игровая;dpi;hidpp;logitech;
+StartupNotify=true
+StartupWMClass=io.github.mousecfg.MouseCfg
