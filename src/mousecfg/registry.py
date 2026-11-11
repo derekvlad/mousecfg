@@ -30,6 +30,10 @@ class DeviceState:
     input_path: str = ""
     profiles_file: str = ""
     active_profile: str = ""
+    # Профиль, выбранный пользователем вручную (CLI/трей/GUI). Демон
+    # удерживает его при смене фокуса, пока не совпадёт профиль по
+    # приложению (`match_apps`). Пусто — обычный автоматический выбор.
+    pinned_profile: str = ""
     mode: str = ""
     lighting_supported: bool = False
     seen_at: float = 0.0

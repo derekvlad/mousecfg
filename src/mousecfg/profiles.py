@@ -311,6 +311,32 @@ def select(profile_set: ProfileSet, *, serial: str = "", app: str = "") -> Profi
     return best
 
 
+def get(profile_set: ProfileSet, profile_id: str) -> Profile | None:
+    """Найти профиль по id ('' или отсутствующий id — None)."""
+    if not profile_id:
+        return None
+    return next((profile for profile in profile_set.profiles if profile.id == profile_id), None)
+
+
+def choose(
+    profile_set: ProfileSet, *, serial: str = "", app: str = "", pinned_id: str = ""
+) -> Profile | None:
+    """Выбрать профиль с учётом выбора пользователя.
+
+    Профиль, совпавший по приложению (`match_apps`), всегда важнее ручного
+    выбора: он описывает именно это приложение. Но если приложение ничему не
+    совпало, удерживается профиль, который пользователь выбрал вручную
+    (`pinned_id`) — иначе автоматический пересчёт на каждой смене фокуса
+    сбрасывал бы выбор на первый профиль в файле. Без ручного выбора
+    поведение прежнее — обычный `select`.
+    """
+    matched = select(profile_set, serial=serial, app=app)
+    if matched is not None and matched.match_apps:
+        return matched
+    pinned = get(profile_set, pinned_id)
+    return pinned if pinned is not None else matched
+
+
 def _write_checked(path: Path, text: str) -> None:
     """Записать TOML только если он разбирается и не ломает ссылки на макросы.
 

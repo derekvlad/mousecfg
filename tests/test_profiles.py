@@ -92,6 +92,27 @@ dpi = 1600
     assert profiles.select(parsed, serial="OTHER").id == "fallback"
 
 
+def test_choose_keeps_manual_pick_between_focus_changes():
+    """Ручной выбор не сбрасывается на первый профиль при смене приложения.
+
+    Регрессия: профиль без `match_apps` выбирался заново на каждой смене
+    фокуса, и `select` возвращал первый профиль в файле — выбор «прыгал»
+    обратно. `choose` удерживает закреплённый профиль.
+    """
+    parsed = profiles.parse_profiles(GOOD)  # default (без условий), fps (match_apps)
+    # Пользователь вручную выбрал профиль без условий — он должен остаться.
+    assert profiles.choose(parsed, app="firefox", pinned_id="default").id == "default"
+    # Профиль с match_apps всё равно важнее ручного выбора.
+    assert profiles.choose(parsed, app="cs2", pinned_id="default").id == "fps"
+    # Без закрепления — прежний автоматический выбор.
+    assert profiles.choose(parsed, app="cs2").id == "fps"
+
+
+def test_choose_ignores_pin_to_unknown_profile():
+    parsed = profiles.parse_profiles(GOOD)
+    assert profiles.choose(parsed, pinned_id="нет-такого").id == "default"
+
+
 def test_add_profile_keeps_file_valid(tmp_path):
     path = tmp_path / "profiles.toml"
     path.write_text("version = 1\n\n[[profile]]\nid = \"base\"\ndpi = 800\n", encoding="utf-8")

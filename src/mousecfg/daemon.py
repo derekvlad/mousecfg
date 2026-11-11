@@ -207,12 +207,21 @@ class Daemon:
         except (profiles.ProfileError, ValueError, OSError) as exc:
             runtime.last_error = f"профили: {exc}"
             logger.warning("%s: %s", path, exc)
+            return
+        # Ручной выбор мог указывать на профиль, который удалили из файла:
+        # тогда снимаем закрепление, чтобы оно не блокировало обычный выбор.
+        pinned = runtime.state.pinned_profile
+        if pinned and profiles.get(runtime.profile_set, pinned) is None:
+            runtime.state.pinned_profile = ""
 
     def _apply(self, runtime: DeviceRuntime, *, reason: str) -> None:
         if runtime.profile_set is None:
             return
-        chosen = profiles.select(
-            runtime.profile_set, serial=runtime.state.serial, app=self.focused_app
+        chosen = profiles.choose(
+            runtime.profile_set,
+            serial=runtime.state.serial,
+            app=self.focused_app,
+            pinned_id=runtime.state.pinned_profile,
         )
         if chosen is None:
             logger.debug("%s: нет подходящего профиля", runtime.state.name)
@@ -269,8 +278,8 @@ class Daemon:
         runtime.state.input_path = info.path
         registry.save_state(self.state)
 
-        chosen = runtime.active_profile or profiles.select(
-            runtime.profile_set, serial=runtime.state.serial
+        chosen = runtime.active_profile or profiles.choose(
+            runtime.profile_set, serial=runtime.state.serial, pinned_id=runtime.state.pinned_profile
         )
         if chosen is None or not chosen.buttons:
             return
@@ -482,6 +491,7 @@ class Daemon:
             result = engine.apply_profile(opened.device, chosen)
         runtime.active_profile = chosen
         runtime.state.active_profile = chosen.id
+        runtime.state.pinned_profile = chosen.id
         if "dpi" in result.applied:
             runtime.dpi = int(result.applied["dpi"])
         if "report_rate_ms" in result.applied:
@@ -590,6 +600,7 @@ class Daemon:
             result = engine.apply_profile(opened.device, chosen)
         runtime.active_profile = chosen
         runtime.state.active_profile = chosen.id
+        runtime.state.pinned_profile = chosen.id
         if "dpi" in result.applied:
             runtime.dpi = int(result.applied["dpi"])
         if "report_rate_ms" in result.applied:
