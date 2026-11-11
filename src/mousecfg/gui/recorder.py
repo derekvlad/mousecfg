@@ -6,6 +6,12 @@
 (см. input/recorder.py), который нужен для «сырой» записи сквозь хоткеи
 оконного менеджера.
 
+Клавиши распознаются по `keycode`, а не по `keyval`. `keyval` зависит от
+раскладки и Shift: при русской раскладке `a` приходит как «ф», а `Shift+1` —
+как `exclam`; на такой раскладке запись по keyval теряла почти все клавиши
+и путала символы. GTK отдаёт `keycode` в X11-нумерации, то есть evdev-код
+плюс 8 — он одинаков независимо от раскладки и Shift.
+
 Модификаторы (Ctrl/Alt/Shift/Super) не становятся отдельными шагами: они
 приклеиваются к следующей клавише, поэтому Ctrl+Alt+T — это один шаг.
 """
@@ -15,66 +21,35 @@ from __future__ import annotations
 import logging
 from collections.abc import Callable
 
-from gi.repository import Adw, Gdk, Gtk
+from gi.repository import Adw, Gtk
+
+from mousecfg.input.actions import ActionError, parse_keys
+from mousecfg.input.recorder import MODIFIER_CODES, _key_token
 
 logger = logging.getLogger(__name__)
 
-# Клавиши-модификаторы по keyval -> токен, понятный parse_keys.
-_MODIFIER_TOKENS: dict[int, str] = {
-    Gdk.KEY_Control_L: "ctrl",
-    Gdk.KEY_Control_R: "ctrl",
-    Gdk.KEY_Alt_L: "alt",
-    Gdk.KEY_Alt_R: "alt",
-    Gdk.KEY_Shift_L: "shift",
-    Gdk.KEY_Shift_R: "shift",
-    Gdk.KEY_Super_L: "super",
-    Gdk.KEY_Super_R: "super",
-    Gdk.KEY_Meta_L: "super",
-    Gdk.KEY_Meta_R: "super",
-}
-
-# Именованные клавиши: keyval -> токен (в нижнем регистре, как в actions._resolve_key).
-_NAMED_TOKENS: dict[int, str] = {
-    Gdk.KEY_Return: "enter",
-    Gdk.KEY_KP_Enter: "enter",
-    Gdk.KEY_Escape: "escape",
-    Gdk.KEY_BackSpace: "backspace",
-    Gdk.KEY_Tab: "tab",
-    Gdk.KEY_Delete: "delete",
-    Gdk.KEY_Insert: "insert",
-    Gdk.KEY_Home: "home",
-    Gdk.KEY_End: "end",
-    Gdk.KEY_Page_Up: "pgup",
-    Gdk.KEY_Page_Down: "pgdn",
-    Gdk.KEY_Up: "up",
-    Gdk.KEY_Down: "down",
-    Gdk.KEY_Left: "left",
-    Gdk.KEY_Right: "right",
-    Gdk.KEY_space: "space",
-    Gdk.KEY_Print: "print",
-    Gdk.KEY_Scroll_Lock: "scrolllock",
-    Gdk.KEY_Pause: "pause",
-}
+# GTK (и Wayland, и X11) нумерует клавиши как X11: evdev-код + 8.
+X11_KEYCODE_OFFSET = 8
 
 # Модификаторы, которые в записи придерживаются к следующей клавише.
-_MODIFIER_KEYVALS = frozenset(_MODIFIER_TOKENS)
+_MODIFIER_KEYCODES = frozenset(code + X11_KEYCODE_OFFSET for code in MODIFIER_CODES)
 
 
-def keyval_to_token(keyval: int) -> str:
-    """keyval GTK -> токен, который понимает parse_keys. '' — клавиша не годится."""
-    if keyval in _MODIFIER_TOKENS:
-        return _MODIFIER_TOKENS[keyval]
-    if keyval in _NAMED_TOKENS:
-        return _NAMED_TOKENS[keyval]
-    # F1..F35.
-    if Gdk.KEY_F1 <= keyval <= Gdk.KEY_F35:
-        return f"F{keyval - Gdk.KEY_F1 + 1}"
-    name = Gdk.keyval_name(keyval)
-    if name and len(name) == 1 and name.isprintable():
-        return name
-    # Мультимедиа-клавиши GTK зовёт XF86AudioRaiseVolume и т. п.; в этот список
-    # они не входят намеренно: parse_keys их не знает и запись бы не исполнилась.
-    return ""
+def keycode_to_token(keycode: int) -> str:
+    """keycode GTK -> токен, который понимает parse_keys. '' — клавиша не годится."""
+    code = keycode - X11_KEYCODE_OFFSET
+    if code < 0:
+        return ""
+    token = _key_token(code)
+    if not token:
+        return ""
+    try:
+        # Токен должен реально исполняться: так отсеиваются клавиши без имени
+        # (мультимедиа, «сырые» коды), которые parse_keys не знает.
+        parse_keys(token)
+    except ActionError:
+        return ""
+    return token
 
 
 class MacroRecordingDialog(Adw.Window):
@@ -184,31 +159,31 @@ class MacroRecordingDialog(Adw.Window):
         if self._recording:
             self.grab_focus()
 
-    def _on_key_pressed(self, _c: Gtk.EventControllerKey, keyval: int, _code: int, _state: int) -> bool:
+    def _on_key_pressed(self, _c: Gtk.EventControllerKey, _keyval: int, keycode: int, _state: int) -> bool:
         if not self._recording:
             return False
-        if keyval in _MODIFIER_KEYVALS:
-            if keyval not in self._held:
-                self._held.append(keyval)
+        if keycode in self._held:
+            # Автоповтор удерживаемой клавиши — не отдельный шаг.
             return True
-        if keyval not in self._held:
-            self._held.append(keyval)
+        self._held.append(keycode)
+        if keycode in _MODIFIER_KEYCODES:
+            return True
         spec = self._combo()
         if spec:
             self._steps.append({"tap": spec})
             self._render_steps()
         return True  # не даём акселераторам окна перехватить нажатие
 
-    def _on_key_released(self, _c: Gtk.EventControllerKey, keyval: int, _code: int, _state: int) -> bool:
+    def _on_key_released(self, _c: Gtk.EventControllerKey, _keyval: int, keycode: int, _state: int) -> bool:
         if not self._recording:
             return False
-        if keyval in self._held:
-            self._held.remove(keyval)
+        if keycode in self._held:
+            self._held.remove(keycode)
         return True
 
     def _combo(self) -> str:
-        modifiers = [keyval_to_token(k) for k in self._held if k in _MODIFIER_KEYVALS]
-        keys = [keyval_to_token(k) for k in self._held if k not in _MODIFIER_KEYVALS]
+        modifiers = [keycode_to_token(k) for k in self._held if k in _MODIFIER_KEYCODES]
+        keys = [keycode_to_token(k) for k in self._held if k not in _MODIFIER_KEYCODES]
         tokens = [tok for tok in modifiers + keys if tok]
         return "+".join(tokens)
 
