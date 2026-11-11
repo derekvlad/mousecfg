@@ -16,7 +16,6 @@ classifiers = [
     "Development Status :: 3 - Alpha",
     "Environment :: X11 Applications :: GTK",
     "Intended Audience :: End Users/Desktop",
-    "License :: OSI Approved :: GNU General Public License v3 or later (GPLv3+)",
     "Operating System :: POSIX :: Linux",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.11",
@@ -43,6 +42,9 @@ dev = ["pytest>=8", "ruff>=0.6", "evdev>=1.6"]
 [project.scripts]
 mousecfg = "mousecfg.cli:main"
 mousecfg-daemon = "mousecfg.daemon_entry:main"
+# Трей — отдельный GTK3-процесс: AppIndicator3 несовместим с GTK4/libadwaita
+# в одном процессе. Он же держит сессию глобальных хоткеев портала.
+mousecfg-tray = "mousecfg.tray:main"
 
 [project.gui-scripts]
 mousecfg-gui = "mousecfg.gui.app:main"

@@ -31,6 +31,7 @@ class DeviceState:
     profiles_file: str = ""
     active_profile: str = ""
     mode: str = ""
+    lighting_supported: bool = False
     seen_at: float = 0.0
     extra: dict = field(default_factory=dict)
 

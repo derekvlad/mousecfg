@@ -34,6 +34,10 @@ def _add_profile_edit_args(parser: argparse.ArgumentParser, *, require_id: bool)
     )
     parser.add_argument("--match-app", action="append", default=[], metavar="APP", help="привязать профиль к приложению")
     parser.add_argument("--match-serial", action="append", default=[], metavar="SERIAL", help="привязать профиль к серийнику")
+    parser.add_argument("--lighting-effect", default=None, help="эффект подсветки: static, breathe, cycle, wave, disabled")
+    parser.add_argument("--lighting-color", default=None, help="цвет подсветки: '#rrggbb' или имя (red, blue...)")
+    parser.add_argument("--lighting-brightness", type=int, default=None, help="яркость подсветки 0..100")
+    parser.add_argument("--lighting-period", type=int, default=None, help="период эффекта, мс")
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -72,6 +76,15 @@ def _build_parser() -> argparse.ArgumentParser:
     mode = sub.add_parser("mode", parents=[common], help="режим устройства: показать или переключить")
     mode.add_argument("value", nargs="?", choices=["host", "onboard"], help="без значения — только показать")
 
+    light = sub.add_parser("lighting", parents=[common], help="подсветка мыши: показать зоны и эффекты")
+    light.add_argument("--effect", help="включить эффект волатильно (static, breathe, cycle, wave, disabled...)")
+    light.add_argument("--color", help="цвет: '#rrggbb', 'red' или 0xRRGGBB")
+    light.add_argument("--brightness", type=int, help="яркость 0..100")
+    light.add_argument("--period", type=int, help="период эффекта, мс")
+    light.add_argument("--intensity", type=int, help="интенсивность 0..255")
+    light.add_argument("--form", type=int, help="форма волны (для breathe)")
+    light.add_argument("--zone", type=int, default=0, help="номер зоны подсветки")
+
     validate = sub.add_parser("profiles-check", parents=[common], help="проверить TOML-профили без устройства")
     validate.add_argument("path", nargs="?", default=None, help="файл или каталог (по умолчанию ~/.config/mousecfg/profiles)")
 
@@ -91,6 +104,14 @@ def _build_parser() -> argparse.ArgumentParser:
     profile_show = profile_sub.add_parser("show", parents=[common], help="показать профили файла")
     profile_show.add_argument("id", nargs="?", help="id профиля (без него — все)")
     profile_show.add_argument("--profile-file", default=None, help="путь к .toml (по умолчанию — файл профилей устройства)")
+
+    profile_activate = profile_sub.add_parser(
+        "activate", parents=[common], help="переключить устройство на профиль (через демон; для хоткеев)"
+    )
+    profile_activate.add_argument("id", help="id профиля")
+
+    profile_next = profile_sub.add_parser("next", parents=[common], help="следующий профиль по кругу")
+    profile_next.add_argument("--prev", action="store_true", help="предыдущий вместо следующего")
 
     macro = sub.add_parser("macro", parents=[common], help="список и добавление макросов (исполняются на хосте)")
     macro_sub = macro.add_subparsers(dest="macro_command", required=True)
@@ -338,6 +359,98 @@ def cmd_mode(args: argparse.Namespace) -> int:
         return 2
 
 
+def cmd_lighting(args: argparse.Namespace) -> int:
+    with session.open_device(args.device, allow_onboard_switch=args.allow_onboard_switch, dry_run=args.dry_run) as opened:
+        device = opened.device
+        info = device.lighting_info()
+        if not info.supported:
+            print("Устройство не поддерживает подсветку RGB_EFFECTS (0x8071).", file=sys.stderr)
+            return 1
+
+        if args.effect is None:
+            data: dict = {
+                "zones": [
+                    {
+                        "index": zone.index,
+                        "location": zone.location_name,
+                        "effects": [
+                            {
+                                "id": f"{effect.effect_id:#04x}",
+                                "name": effect.name,
+                                "period": effect.period,
+                            }
+                            for effect in zone.effects
+                        ],
+                    }
+                    for zone in info.zones
+                ],
+                "readable": info.readable,
+                "note": "запись волатильна: подсветка не сохраняется в память мыши",
+            }
+            _dump(data, args.json)
+            return 0
+
+        effect_name = args.effect.lower()
+        known_effects = {effect.name: effect.effect_id for zone in info.zones for effect in zone.effects}
+        # устройство может знать больше эффектов, чем перечислено: пробуем по таблице
+        effect_id = known_effects.get(effect_name)
+        if effect_id is None:
+            from .hidpp.device import LIGHTING_EFFECTS
+
+            effect_id = next((eid for eid, (name, _) in LIGHTING_EFFECTS.items() if name == effect_name), None)
+        if effect_id is None:
+            print(
+                f"Эффект {effect_name!r} неизвестен. Доступные: {', '.join(sorted(known_effects)) or 'нет'}",
+                file=sys.stderr,
+            )
+            return 1
+
+        params: dict[str, int] = {}
+        if args.color is not None:
+            params["color"] = profiles.parse_color(args.color) or 0
+        if args.period is not None:
+            params["period"] = args.period
+        if args.intensity is not None:
+            params["intensity"] = args.intensity
+        if args.form is not None:
+            params["form"] = args.form
+        if args.brightness is not None:
+            if not 0 <= args.brightness <= 100:
+                print("Яркость должна быть 0..100", file=sys.stderr)
+                return 1
+            params["intensity"] = max(0, min(255, round(args.brightness * 255 / 100)))
+
+        try:
+            slot = device.set_lighting(effect_id, params, zone=args.zone)
+        except (ProtocolError, ValueError) as exc:
+            print(f"Не удалось включить подсветку: {exc}", file=sys.stderr)
+            return 1
+
+        if args.dry_run:
+            _dump(
+                {
+                    "effect": effect_name,
+                    "slot": slot,
+                    "zone": args.zone,
+                    "sent": False,
+                    "note": "[dry-run] кадр не отправлен",
+                },
+                args.json,
+            )
+            return 0
+        _dump(
+            {
+                "effect": effect_name,
+                "slot": slot,
+                "zone": args.zone,
+                "params": params,
+                "note": "волатильно: пропадёт при отключении мыши, демон применит заново",
+            },
+            args.json,
+        )
+    return 0
+
+
 def cmd_profiles_check(args: argparse.Namespace) -> int:
     from pathlib import Path
 
@@ -385,6 +498,32 @@ def _collect_buttons(specs: list[str]) -> dict[str, object]:
     return buttons
 
 
+def _collect_lighting(args: argparse.Namespace) -> dict[str, object] | None:
+    """Собрать блок подсветки из ключей --lighting-* (если они заданы)."""
+    effect = getattr(args, "lighting_effect", None)
+    color = getattr(args, "lighting_color", None)
+    brightness = getattr(args, "lighting_brightness", None)
+    period = getattr(args, "lighting_period", None)
+    if effect is None and color is None and brightness is None and period is None:
+        return None
+    lighting: dict[str, object] = {}
+    if effect is not None:
+        lighting["effect"] = str(effect).lower()
+    elif color is not None:
+        lighting["effect"] = "static"
+    if color is not None:
+        lighting["color"] = profiles.parse_color(color)
+    if brightness is not None:
+        lighting["brightness"] = int(brightness)
+    if period is not None:
+        lighting["period"] = int(period)
+    if not lighting:
+        return None
+    profiles.validate_lighting(lighting)
+    return lighting
+
+
+
 def cmd_profile_add(args: argparse.Namespace) -> int:
     return _profile_write(args, replace=False)
 
@@ -403,6 +542,7 @@ def _profile_write(args: argparse.Namespace, *, replace: bool) -> int:
 
     try:
         buttons = _collect_buttons(args.button)
+        lighting = _collect_lighting(args)
         profile = profiles.Profile(
             id=str(args.id),
             name=str(args.name),
@@ -411,6 +551,7 @@ def _profile_write(args: argparse.Namespace, *, replace: bool) -> int:
             buttons=buttons,
             match_apps=list(args.match_app),
             match_serials=list(args.match_serial),
+            lighting=lighting,
         )
         profile.validate()
     except (profiles.ProfileError, ValueError) as exc:
@@ -432,6 +573,7 @@ def _profile_write(args: argparse.Namespace, *, replace: bool) -> int:
                 buttons=buttons,
                 match_apps=profile.match_apps,
                 match_serials=profile.match_serials,
+                lighting=lighting,
             )
         except ipc.IpcError as exc:
             print(f"Демон отказал: {exc}", file=sys.stderr)
@@ -535,6 +677,7 @@ def cmd_profile_show(args: argparse.Namespace) -> int:
                 "buttons": item.buttons,
                 "match_apps": item.match_apps,
                 "match_serials": item.match_serials,
+                "lighting": item.lighting,
             }
             for item in selected
         ]
@@ -552,8 +695,59 @@ def cmd_profile_show(args: argparse.Namespace) -> int:
             print(f"  match_apps: {', '.join(item.match_apps)}")
         if item.match_serials:
             print(f"  match_serials: {', '.join(item.match_serials)}")
+        if item.lighting:
+            bits = [str(item.lighting.get("effect", "static"))]
+            if item.lighting.get("color") is not None:
+                bits.append(f'#{int(item.lighting["color"]):06x}')
+            if item.lighting.get("brightness") is not None:
+                bits.append(f'{item.lighting["brightness"]}%')
+            print(f"  подсветка: {', '.join(bits)}")
         for name, action in item.buttons.items():
             print(f"  кнопка {name}: {action}")
+    return 0
+
+
+def cmd_profile_activate(args: argparse.Namespace) -> int:
+    """Переключить профиль через демон (используется хоткеем и треем)."""
+    client = ipc.Client()
+    if not client.is_available():
+        print("Демон не запущен: активация профиля доступна только через него.", file=sys.stderr)
+        return 1
+    try:
+        result = client.call(
+            "profile-activate",
+            device=_resolve_device_key(getattr(args, "device", None)),
+            profile=str(args.id),
+        )
+    except ipc.IpcError as exc:
+        print(f"Демон отказал: {exc}", file=sys.stderr)
+        return 1
+    if args.json:
+        print(json.dumps(ipc.serialize(result), ensure_ascii=False, indent=2))
+    else:
+        print(f"Активный профиль: {result.get('active_profile')} — {result.get('result')}")
+    return 0
+
+
+def cmd_profile_next(args: argparse.Namespace) -> int:
+    """Листать профили по кругу — то, что вешают на хоткей."""
+    client = ipc.Client()
+    if not client.is_available():
+        print("Демон не запущен: листание профилей доступно только через него.", file=sys.stderr)
+        return 1
+    method = "profile-prev" if getattr(args, "prev", False) else "profile-next"
+    try:
+        result = client.call(
+            method,
+            device=_resolve_device_key(getattr(args, "device", None)),
+        )
+    except ipc.IpcError as exc:
+        print(f"Демон отказал: {exc}", file=sys.stderr)
+        return 1
+    if args.json:
+        print(json.dumps(ipc.serialize(result), ensure_ascii=False, indent=2))
+    else:
+        print(f"Активный профиль: {result.get('active_profile')} — {result.get('result')}")
     return 0
 
 
@@ -879,6 +1073,7 @@ def main(argv: list[str] | None = None) -> int:
         "set-dpi": cmd_set_dpi,
         "set-rate": cmd_set_rate,
         "mode": cmd_mode,
+        "lighting": cmd_lighting,
         "profiles-check": cmd_profiles_check,
         "apply": cmd_apply,
         "status": cmd_status,
@@ -890,6 +1085,8 @@ def main(argv: list[str] | None = None) -> int:
         "profile-set": cmd_profile_set,
         "profile-remove": cmd_profile_remove,
         "profile-show": cmd_profile_show,
+        "profile-activate": cmd_profile_activate,
+        "profile-next": cmd_profile_next,
         "macro-list": cmd_macro_list,
         "macro-add": cmd_macro_add,
     }[_command_name(args)]

@@ -1,0 +1,16 @@
+[Desktop Entry]
+Type=Application
+Name=mousecfg tray
+Comment=Status icon and profile hotkeys for mousecfg
+Comment[ru]=Иконка в трее и хоткеи смены профилей для mousecfg
+# Трей сам заходит в systemd-scope app-io.github.mousecfg.MouseCfg-tray.scope:
+# без этого xdg-desktop-portal не выдаёт app id и хоткеи не работают.
+# Отключить хоткеи (и заход в scope) можно ключом --no-shortcuts.
+Exec=mousecfg-tray
+Icon=io.github.mousecfg.MouseCfg
+Terminal=false
+Categories=Settings;HardwareSettings;
+Keywords=mouse;gaming;dpi;hidpp;logitech;mousecfg;tray;
+Keywords[ru]=мышь;игровая;dpi;hidpp;logitech;трей;
+StartupNotify=false
+X-GNOME-Autostart-enabled=true

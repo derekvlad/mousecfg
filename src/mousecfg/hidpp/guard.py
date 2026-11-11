@@ -72,12 +72,9 @@ _FUNCTION_NAMES: dict[tuple[int, int], str] = {
     (FeatureId.MOUSE_BUTTON_SPY, 0x00): "getButtonCount",
     (FeatureId.MOUSE_BUTTON_SPY, 0x10): "getButtonInfo",
     (FeatureId.MOUSE_BUTTON_SPY, 0x20): "setButtonEcho",
-    (FeatureId.RGB_EFFECTS, 0x00): "getInfo",
-    (FeatureId.RGB_EFFECTS, 0x10): "getZoneInfo",
-    (FeatureId.RGB_EFFECTS, 0x20): "setZoneEffect",
-    (FeatureId.RGB_EFFECTS, 0x30): "setZoneEffect2",
-    (FeatureId.RGB_EFFECTS, 0x40): "setZoneEffect3",
-    (FeatureId.RGB_EFFECTS, 0x50): "setZoneEffect4",
+    (FeatureId.RGB_EFFECTS, 0x00): "getInfo/zone/effect",
+    (FeatureId.RGB_EFFECTS, 0x10): "setZoneEffect",
+    (FeatureId.RGB_EFFECTS, 0x30): "setNvConfig",
     (FeatureId.PER_KEY_LIGHTING_V2, 0x00): "getInfo",
     (FeatureId.PER_KEY_LIGHTING_V2, 0x10): "getZoneInfo",
     (FeatureId.PER_KEY_LIGHTING_V2, 0x20): "setZoneState",
@@ -137,8 +134,7 @@ _allow(FeatureId.REPORT_RATE, 0x10, "текущая частота опроса"
 _allow(FeatureId.ONBOARD_PROFILES, 0x20, "текущий режим устройства (On-Board/Host)")
 _allow(FeatureId.MOUSE_BUTTON_SPY, 0x00, "число кнопок")
 _allow(FeatureId.MOUSE_BUTTON_SPY, 0x10, "информация о кнопке")
-_allow(FeatureId.RGB_EFFECTS, 0x00, "возможности подсветки")
-_allow(FeatureId.RGB_EFFECTS, 0x10, "информация о зоне")
+_allow(FeatureId.RGB_EFFECTS, 0x00, "возможности подсветки, зоны и эффекты (чтение)")
 _allow(FeatureId.PER_KEY_LIGHTING_V2, 0x00, "возможности per-key подсветки")
 _allow(FeatureId.PER_KEY_LIGHTING_V2, 0x10, "информация о зоне per-key")
 
@@ -150,6 +146,13 @@ _allow(
     mutating=True,
 )
 _allow(FeatureId.REPORT_RATE, 0x20, "смена частоты опроса: волатильно", mutating=True)
+_allow(
+    FeatureId.RGB_EFFECTS,
+    0x10,
+    "эффект подсветки зоны (цвет/яркость/режим): волатильно, "
+    "пропадёт при отключении мыши — как и остальные настройки профиля",
+    mutating=True,
+)
 
 # --- то, что писать нельзя --------------------------------------------
 _deny(
@@ -162,6 +165,12 @@ _deny(FeatureId.ONBOARD_PROFILES, 0x70, "запись данных сектор�
 _deny(FeatureId.ONBOARD_PROFILES, 0x80, "финализация записи сектора onboard-памяти")
 _deny(FeatureId.ONBOARD_PROFILES, 0x30, "выбор активного onboard-профиля")
 _deny(FeatureId.DEVICE_RESET, 0x00, "сброс устройства может стереть конфигурацию")
+_deny(
+    FeatureId.RGB_EFFECTS,
+    0x30,
+    "NvConfig подсветки: пишет эффект/цвет в энергонезависимую память мыши "
+    "(Solaar держит её запрещённой по умолчанию для незнакомых моделей)",
+)
 _deny(FeatureId.CONFIG_DEVICE_PROPS, 0x20, "изменение свойств конфигурации устройства")
 _deny(FeatureId.ENABLE_HIDDEN_FEATURES, 0x00, "включение скрытых фич — путь к неизвестным записям")
 _deny(FeatureId.DFU_CONTROL_SIGNED, 0x20, "прошивка устройства")

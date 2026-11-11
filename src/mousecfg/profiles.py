@@ -31,6 +31,107 @@ BUTTON_ALIASES: dict[str, int] = {
 
 _RATE_RE = re.compile(r"^(?P<value>\d+)(?P<unit>ms|hz)?$", re.IGNORECASE)
 
+# Несколько удобных именованных цветов, чтобы писать в профиле «red», а не hex.
+COLOR_NAMES: dict[str, int] = {
+    "off": 0x000000,
+    "black": 0x000000,
+    "white": 0xFFFFFF,
+    "red": 0xFF0000,
+    "green": 0x00FF00,
+    "blue": 0x0000FF,
+    "yellow": 0xFFFF00,
+    "cyan": 0x00FFFF,
+    "magenta": 0xFF00FF,
+    "orange": 0xFF8000,
+    "purple": 0x8000FF,
+    "pink": 0xFF40A0,
+}
+
+# Эффекты подсветки и их параметры. Копия таблицы из hidpp.device, но здесь
+# она нужна без устройства: файл профилей проверяется и без мыши.
+LIGHTING_EFFECTS: dict[str, dict[str, tuple[int, int]]] = {
+    "disabled": {},
+    "static": {"color": (0, 3), "ramp": (3, 1)},
+    "pulse": {"color": (0, 3), "speed": (3, 1)},
+    "cycle": {"period": (5, 2), "intensity": (7, 1)},
+    "wave": {"period": (6, 2), "direction": (9, 1)},
+    "breathe": {"color": (0, 3), "period": (3, 2), "form": (5, 1), "intensity": (6, 1)},
+    "ripple": {"color": (0, 3), "period": (4, 2)},
+    "decomposition": {"period": (6, 2), "intensity": (8, 1)},
+}
+
+# Человекочитаемые имена параметров -> байтовое смещение/размер (как на железе).
+LIGHTING_PARAM_MAX = {"color": 0xFFFFFF, "period": 0xFFFF, "intensity": 0xFF, "form": 0xFF, "ramp": 0xFF, "speed": 0xFF, "direction": 0xFF}
+
+
+def validate_lighting(lighting: Any, *, profile_id: str = "?") -> None:
+    """Проверить блок подсветки профиля, не трогая устройство."""
+    if lighting is None:
+        return
+    if not isinstance(lighting, dict):
+        raise ProfileError(f"профиль {profile_id!r}: подсветка должна быть таблицей")
+    effect = str(lighting.get("effect", "static")).lower()
+    if effect not in LIGHTING_EFFECTS:
+        known = ", ".join(sorted(LIGHTING_EFFECTS))
+        raise ProfileError(f"профиль {profile_id!r}: неизвестный эффект подсветки {effect!r}; известные: {known}")
+    if "brightness" in lighting:
+        value = lighting["brightness"]
+        if not isinstance(value, int) or not 0 <= value <= 100:
+            raise ProfileError(f"профиль {profile_id!r}: яркость подсветки — целое 0..100")
+    if "color" in lighting:
+        color = lighting["color"]
+        if isinstance(color, str):
+            color = _parse_color(color)
+        if not isinstance(color, int) or not 0 <= color <= 0xFFFFFF:
+            raise ProfileError(f"профиль {profile_id!r}: цвет подсветки — #rrggbb или целое 0..0xffffff")
+    zone = lighting.get("zone", 0)
+    if not isinstance(zone, int) or zone < 0:
+        raise ProfileError(f"профиль {profile_id!r}: зона подсветки должна быть неотрицательным целым")
+
+
+def parse_color(value: Any) -> int | None:
+    """'#rrggbb' / 'rrggbb' / 0xRRGGBB / 'red' -> целое 0xRRGGBB."""
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        raise ProfileError("цвет подсветки: булево значение недопустимо")
+    if isinstance(value, int):
+        if 0 <= value <= 0xFFFFFF:
+            return value
+        raise ProfileError(f"цвет подсветки {value:#x} вне диапазона 0..0xffffff")
+    if isinstance(value, str):
+        text = value.strip().lower()
+        if text in COLOR_NAMES:
+            return COLOR_NAMES[text]
+        if text.startswith("#"):
+            text = text[1:]
+        if len(text) == 6:
+            try:
+                return int(text, 16)
+            except ValueError as exc:
+                raise ProfileError(f"цвет подсветки {value!r} не разбирается") from exc
+        if len(text) == 3:
+            try:
+                return int(text[0] * 2 + text[1] * 2 + text[2] * 2, 16)
+            except ValueError as exc:
+                raise ProfileError(f"цвет подсветки {value!r} не разбирается") from exc
+    raise ProfileError(f"цвет подсветки {value!r} не разбирается")
+
+
+def _parse_color(value: Any) -> int:
+    parsed = parse_color(value)
+    assert parsed is not None
+    return parsed
+
+
+def brightness_to_intensity(brightness: int) -> int:
+    """0..100 (яркость в профиле) -> 0..255 (байт intensity у устройства).
+
+    Но если эффект понимает только color (static), параметра intensity у
+    него нет — тогда яркость влияет только на выбор оттенка (см. engine).
+    """
+    return max(0, min(255, round(brightness * 255 / 100)))
+
 
 class ProfileError(ValueError):
     pass
@@ -70,6 +171,7 @@ class Profile:
     match_serials: list[str] = field(default_factory=list)
     match_apps: list[str] = field(default_factory=list)
     storage: str = "host"
+    lighting: dict[str, Any] | None = None
 
     def validate(self) -> None:
         if self.storage != "host":
@@ -87,6 +189,7 @@ class Profile:
                 )
             if not isinstance(action, (str, dict)):
                 raise ProfileError(f"профиль {self.id!r}: кнопка {name!r} — ожидается строка или таблица")
+        validate_lighting(self.lighting, profile_id=self.id)
 
 
 @dataclass
@@ -142,6 +245,7 @@ def parse_profiles(text: str, *, source: str = "<string>") -> ProfileSet:
             match_serials=[str(item) for item in raw.get("match_serials", [])],
             match_apps=[str(item) for item in raw.get("match_apps", [])],
             storage=str(raw.get("storage", "host")),
+            lighting=_parse_lighting(raw.get("lighting")),
         )
         profile.validate()
         profiles.append(profile)
@@ -330,11 +434,58 @@ def render_profile(profile: Profile) -> str:
     if profile.match_serials:
         joined = ", ".join(f'"{item}"' for item in profile.match_serials)
         lines.append(f"match_serials = [{joined}]")
+    if profile.lighting is not None:
+        lines.append("[profile.lighting]")
+        for name, value in _render_lighting_fields(profile.lighting).items():
+            lines.append(f"{name} = {value}")
     if profile.buttons:
         lines.append("[profile.buttons]")
         for name, action in profile.buttons.items():
             lines.append(f'"{name}" = {_render_action(action)}')
     return "\n".join(lines)
+
+
+def parse_lighting(raw: Any) -> dict[str, Any] | None:
+    """Публичная обёртка для разбора блока подсветки (используется в RPC)."""
+    return _parse_lighting(raw)
+
+
+def _parse_lighting(raw: Any) -> dict[str, Any] | None:
+    if raw is None:
+        return None
+    if not isinstance(raw, dict):
+        raise ProfileError("подсветка: ожидается таблица [profile.lighting]")
+    parsed: dict[str, Any] = {}
+    if "effect" in raw:
+        parsed["effect"] = str(raw["effect"]).lower()
+    if "color" in raw:
+        parsed["color"] = _parse_color(raw["color"])
+    if "brightness" in raw:
+        parsed["brightness"] = int(raw["brightness"])
+    if "zone" in raw:
+        parsed["zone"] = int(raw["zone"])
+    for key in ("period", "intensity", "form", "ramp", "speed", "direction"):
+        if key in raw:
+            parsed[key] = int(raw[key])
+    validate_lighting(parsed)
+    return parsed
+
+
+def _render_lighting_fields(lighting: dict[str, Any]) -> dict[str, str]:
+    fields: dict[str, str] = {}
+    if "effect" in lighting:
+        fields["effect"] = f'"{lighting["effect"]}"'
+    if "color" in lighting:
+        fields["color"] = f'"#{int(lighting["color"]):06x}"'
+    if "brightness" in lighting:
+        fields["brightness"] = str(int(lighting["brightness"]))
+    if "zone" in lighting:
+        fields["zone"] = str(int(lighting["zone"]))
+    for key in ("period", "intensity", "form", "ramp", "speed", "direction"):
+        if key in lighting:
+            fields[key] = str(int(lighting[key]))
+    return fields
+
 
 
 def _render_action(action: object) -> str:

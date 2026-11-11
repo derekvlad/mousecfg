@@ -9,12 +9,15 @@ data="${here}/data"
 
 bin_dir="${HOME}/.local/bin"
 apps_dir="${HOME}/.local/share/applications"
+autostart_dir="${HOME}/.config/autostart"
 icons_dir="${HOME}/.local/share/icons/hicolor/scalable/apps"
 units_dir="${HOME}/.config/systemd/user"
 
-mkdir -p "${apps_dir}" "${icons_dir}" "${units_dir}" "${bin_dir}"
+mkdir -p "${apps_dir}" "${autostart_dir}" "${icons_dir}" "${units_dir}" "${bin_dir}"
 
 install -m 0644 "${data}/io.github.mousecfg.MouseCfg.desktop" "${apps_dir}/"
+# Трей кладём и в autostart: он поднимает иконку в панели и хоткеи смены профиля.
+install -m 0644 "${data}/io.github.mousecfg.MouseCfg-tray.desktop" "${autostart_dir}/"
 install -m 0644 "${data}/icons/hicolor/scalable/apps/io.github.mousecfg.MouseCfg.svg" "${icons_dir}/"
 install -m 0644 "${data}/mousecfg-daemon.service" "${units_dir}/"
 
@@ -23,6 +26,7 @@ if [ -x "${here}/.venv/bin/mousecfg" ]; then
     ln -sf "${here}/.venv/bin/mousecfg" "${bin_dir}/mousecfg"
     ln -sf "${here}/.venv/bin/mousecfg-daemon" "${bin_dir}/mousecfg-daemon"
     ln -sf "${here}/.venv/bin/mousecfg-gui" "${bin_dir}/mousecfg-gui"
+    ln -sf "${here}/.venv/bin/mousecfg-tray" "${bin_dir}/mousecfg-tray"
     echo "симлинки команд: ${bin_dir}"
 fi
 

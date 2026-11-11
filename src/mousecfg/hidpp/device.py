@@ -46,6 +46,86 @@ class DeviceInfo:
     serial: str = ""
 
 
+# Названия расположений зон (Solaar LEDZoneLocations).
+LIGHTING_LOCATIONS = {
+    0x00: "unknown",
+    0x01: "primary",
+    0x02: "logo",
+    0x03: "left-side",
+    0x04: "right-side",
+    0x05: "combined",
+}
+
+# Эффекты подсветки: id -> (имя, {параметр: (смещение, размер)}).
+# Таблица повторяет проверенные на железе кадры Solaar (hidpp20.LEDEffects).
+LIGHTING_EFFECTS: dict[int, tuple[str, dict[str, tuple[int, int]]]] = {
+    0x00: ("disabled", {}),
+    0x01: ("static", {"color": (0, 3), "ramp": (3, 1)}),
+    0x02: ("pulse", {"color": (0, 3), "speed": (3, 1)}),
+    0x03: ("cycle", {"period": (5, 2), "intensity": (7, 1)}),
+    0x04: ("wave", {"period": (6, 2), "direction": (9, 1)}),
+    0x0A: ("breathe", {"color": (0, 3), "period": (3, 2), "form": (5, 1), "intensity": (6, 1)}),
+    0x0B: ("ripple", {"color": (0, 3), "period": (4, 2)}),
+    0x0E: ("decomposition", {"period": (6, 2), "intensity": (8, 1)}),
+}
+
+
+def lighting_effect_name(effect_id: int) -> str:
+    known = LIGHTING_EFFECTS.get(effect_id)
+    return known[0] if known else f"effect-{effect_id:#04x}"
+
+
+def _lighting_effect_bytes(slot: int, effect_id: int, params: dict[str, int]) -> bytes:
+    """Собрать 11-байтовое тело эффекта: слот + 10 байтов параметров."""
+    schema = LIGHTING_EFFECTS.get(effect_id, (None, {}))[1]
+    unknown = set(params) - set(schema)
+    if unknown:
+        raise ValueError(
+            f"эффект {lighting_effect_name(effect_id)!r} не знает параметров: {', '.join(sorted(unknown))}"
+        )
+    body = bytearray(10)
+    for name, (offset, size) in schema.items():
+        value = int(params.get(name, 0))
+        if not 0 <= value < (1 << (8 * size)):
+            raise ValueError(f"параметр {name}={value} не влезает в {size} байт")
+        body[offset : offset + size] = value.to_bytes(size, "big")
+    return bytes((slot,)) + bytes(body)
+
+
+@dataclass
+class LightingEffect:
+    slot: int
+    effect_id: int
+    capabilities: int = 0
+    period: int = 0
+
+    @property
+    def name(self) -> str:
+        return lighting_effect_name(self.effect_id)
+
+
+@dataclass
+class LightingZone:
+    index: int
+    location: int = 0
+    effects: list[LightingEffect] = field(default_factory=list)
+
+    @property
+    def location_name(self) -> str:
+        return LIGHTING_LOCATIONS.get(self.location, f"zone-{self.location:#04x}")
+
+
+@dataclass
+class LightingInfo:
+    supported: bool
+    capabilities: int = 0
+    zones: list[LightingZone] = field(default_factory=list)
+
+    @property
+    def readable(self) -> bool:
+        return bool(self.capabilities & 0x0001)
+
+
 class HidppDevice:
     def __init__(
         self,
@@ -336,6 +416,71 @@ class HidppDevice:
         требует allow_onboard_switch в SafePlane."""
         self.request(FeatureId.ONBOARD_PROFILES, 0x10, 0x02)
         return self.get_mode()
+
+    # -- подсветка (RGB_EFFECTS 0x8071) ---------------------------------
+    def lighting_info(self) -> LightingInfo:
+        """Возможности подсветки: сколько зон и что они умеют.
+
+        Устройства без фичи 0x8071 дают пустую структуру, а не ошибку:
+        профиль с подсветкой тогда просто пропускается при применении.
+        """
+        if not self.has_feature(FeatureId.RGB_EFFECTS):
+            return LightingInfo(supported=False)
+        info = self.request(FeatureId.RGB_EFFECTS, 0x00, 0xFF, 0xFF, 0x00)
+        if len(info) < 7:
+            return LightingInfo(supported=False)
+        _, _, zone_count, _, capabilities = struct.unpack("!BBBHH", info[0:7])
+        zones: list[LightingZone] = []
+        for index in range(zone_count):
+            zones.append(self.lighting_zone(index))
+        return LightingInfo(supported=True, capabilities=capabilities, zones=zones)
+
+    def lighting_zone(self, index: int = 0) -> LightingZone:
+        """Описание зоны: расположение и доступные на ней эффекты."""
+        reply = self.request(FeatureId.RGB_EFFECTS, 0x00, index, 0xFF, 0x00)
+        # Solaar читает зону той же функцией 0x00 со смещением 2:
+        # [echo index, echo 0xFF, location u16 BE, count].
+        location, count = struct.unpack("!HB", reply[2:5]) if len(reply) >= 5 else (0, 0)
+        effects: list[LightingEffect] = []
+        for slot in range(count):
+            raw = self.request(FeatureId.RGB_EFFECTS, 0x00, index, slot, 0x00)
+            if len(raw) < 8:
+                continue
+            _, __, effect_id, capabilities, period = struct.unpack("!BBHHH", raw[0:8])
+            effects.append(
+                LightingEffect(slot=slot, effect_id=effect_id, capabilities=capabilities, period=period)
+            )
+        return LightingZone(index=index, location=location, effects=effects)
+
+    def set_lighting(
+        self,
+        effect_id: int,
+        params: dict[str, int] | None = None,
+        *,
+        zone: int = 0,
+        slot: int | None = None,
+    ) -> int:
+        """Включить эффект подсветки зоны (волатильно, fn 0x10).
+
+        `params` — значения параметров эффекта (color/period/intensity/...).
+        Если `slot` не задан, слот ищется по `effect_id` у зоны. В отличие от
+        NvConfig (fn 0x30), эта команда не пишет в энергонезависимую память.
+        """
+        params = params or {}
+        used_slot = slot
+        if used_slot is None:
+            zone_info = self.lighting_zone(zone)
+            used_slot = next((item.slot for item in zone_info.effects if item.effect_id == effect_id), None)
+            if used_slot is None:
+                known = ", ".join(f"{item.effect_id:#04x}" for item in zone_info.effects) or "нет"
+                raise ProtocolError(
+                    f"эффект {effect_id:#04x} недоступен у зоны {zone} (доступны: {known})"
+                )
+
+        payload = _lighting_effect_bytes(used_slot, effect_id, params)
+        # Префикс — номер зоны, суффикс — режим активации (0x01 у Solaar).
+        self.request(FeatureId.RGB_EFFECTS, 0x10, bytes((zone,)) + payload + b"\x01")
+        return used_slot
 
     def info(self) -> DeviceInfo:
         info = DeviceInfo(path=self.transport.path, serial=self.serial)

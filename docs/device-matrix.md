@@ -16,8 +16,26 @@
 | Report rate | поддерживаются 1/2/4/8 мс, чтение/запись работают |
 | Onboard-профили | есть, **1 слот**; `ONBOARD_PROFILES 0x8100` |
 | Divert кнопок | **нет** (`REPROG_CONTROLS_V4 0x1B04` отсутствует) → ремап только через evdev/uinput |
-| LED | `RGB_EFFECTS 0x8071` (1 зона), `PER_KEY_LIGHTING_V2 0x8081` (3 светодиода) |
+| LED | `RGB_EFFECTS 0x8071`: 1 зона (logo), effects Ids `0x00 disabled, 0x01 static, 0x03 cycle, 0x04 wave, 0x0a breathe, 0x0d, 0x0e decomposition`; `PER_KEY_LIGHTING_V2 0x8081` (3 светодиода) |
 | Скрытые фичи | `0x1801, 0x18a1, 0x18b1, 0x1e22, 0x1eb0` — не используются |
+
+### Подсветка (`RGB_EFFECTS 0x8071`)
+
+Протокол проверен на живом устройстве:
+
+* `getInfo` (fn `0x00`, params `FF FF 00`) → 1 зона, capabilities `0x0004`;
+  бит `0x0001` (readable) снят, то есть текущий эффект прочитать нельзя.
+* Информация о зоне — та же функция `0x00` с `(zone, FF, 00)`; смещение
+  `[2:5]` = `location` u16 BE + число эффектов; у G102 `location = 2` (logo),
+  7 эффектов.
+* Описание эффекта — fn `0x00` с `(zone, slot, 00)`.
+* **Волатильная запись эффекта — fn `0x10`**: `zone + slot + 10 байт
+  параметров + 0x01`. Именно её использует проект; она не пишет в
+  энергонезависимую память.
+* **Персистентная запись NvConfig — fn `0x30`** (другая функция), запрещена
+  политикой (`guard`).
+* Проверено: `static red`, `breathe` включаются и держатся до переподключения;
+  недоступный эффект и неизвестный параметр отклоняются с ошибкой.
 
 ### Что даёт «не писать во флеш»
 
@@ -28,7 +46,8 @@
   `--allow-onboard-switch` и попадает в журнал как `persistent-consented`.
 * Запрещены и никогда не уходят: `0x8100/0x30`, `0x8100/0x60..0x80`
   (запись onboard-профилей), `0x1802` (reset), `0x1806/0x20`, `0x1e00`,
-  `0x00c2/0x20` (прошивка). Проверяется тестами в `tests/test_guard.py`.
+  `0x00c2/0x20` (прошивка), `0x8071/0x30` (NvConfig подсветки).
+  Проверяется тестами в `tests/test_guard.py`.
 
 ### Что проверено на живом устройстве
 
@@ -43,6 +62,9 @@
 | GUI | `mousecfg-gui` при запущенном демоне | окно строится, кнопка «Применить» переключает профиль (800↔1600) |
 | Права на evdev-узел | `data/70-mousecfg-input.rules` + `udevadm trigger` | `/dev/input/event3` доступен: `mousecfg inputs` показывает мышь и её кнопки |
 | Ремап кнопок | `mousecfg run-profile examples/g102-buttons.toml --seconds …` | `EVIOCGRAB` встаёт, события ретранслируются, `--seconds` корректно выключает перехват |
+| Подсветка волатильно | `mousecfg lighting --effect static --color '#ff0000'`, затем `breathe` | эффект включается, держится до переподключения; `fn 0x30` отклоняется как `DeniedCommand` |
+| Трей и хоткей | `mousecfg-tray` + панель StatusNotifierWatcher | иконка `mousecfg` регистрируется; портал принимает `BindShortcuts` (`next-profile`, `prev-profile`) |
+| Запись макроса в GUI | «Записать» в группе «Макросы», нажать `Ctrl+Shift+T` | шаг `ctrl+shift+T` появляется списком и сохраняется в файл профилей |
 | Сквозная проверка evdev | виртуальный источник → `Remapper` → виртуальный приёмник | движение насквозь; `side1`→`ALT+LEFT`, `middle`→`CTRL+C`, `side2`→макрос; непривязанная `BTN_RIGHT` проходит как есть; p95 ≈ 0.4 мс |
 | Виртуальное устройство | `data/71-mousecfg-virtual.rules` | `/dev/input/eventN` устройства `mousecfg virtual input` получает ACL пользователя сессии |
 

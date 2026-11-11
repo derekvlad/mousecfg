@@ -114,6 +114,80 @@ _MODIFIER_ALIASES = {
     "win": "KEY_LEFTMETA",
 }
 
+# Человекочитаемые имена клавиш: токен -> KEY_*-имя evdev. Один словарь на
+# разбор (`_resolve_key`) и на обратный перевод кодов в токены (recorder/GUI).
+NAMED_KEYS: dict[str, str] = {
+    "arrowup": "KEY_UP",
+    "up": "KEY_UP",
+    "arrowdown": "KEY_DOWN",
+    "down": "KEY_DOWN",
+    "arrowleft": "KEY_LEFT",
+    "left": "KEY_LEFT",
+    "arrowright": "KEY_RIGHT",
+    "right": "KEY_RIGHT",
+    "home": "KEY_HOME",
+    "end": "KEY_END",
+    "insert": "KEY_INSERT",
+    "esc": "KEY_ESC",
+    "escape": "KEY_ESC",
+    "enter": "KEY_ENTER",
+    "space": "KEY_SPACE",
+    "tab": "KEY_TAB",
+    "backspace": "KEY_BACKSPACE",
+    "delete": "KEY_DELETE",
+    "pgup": "KEY_PAGEUP",
+    "pgdn": "KEY_PAGEDOWN",
+    "pageup": "KEY_PAGEUP",
+    "pagedown": "KEY_PAGEDOWN",
+    "playpause": "KEY_PLAYPAUSE",
+    "volumeup": "KEY_VOLUMEUP",
+    "volumedown": "KEY_VOLUMEDOWN",
+    "mute": "KEY_MUTE",
+    "nextsong": "KEY_NEXTSONG",
+    "previoussong": "KEY_PREVIOUSSONG",
+}
+
+
+def _build_key_token_map() -> dict[int, str]:
+    """Обратный словарь: код evdev -> удобное имя (left, enter, F5...).
+
+    У одной клавиши может быть несколько имён (left/arrowleft). Предпочитаем
+    самое короткое: его приятнее читать в записи и подписях.
+    """
+    mapping: dict[int, str] = {}
+    for token, name in NAMED_KEYS.items():
+        code = ecodes.ecodes.get(name)
+        if code is None:
+            continue
+        current = mapping.get(code)
+        if current is None or len(token) < len(current):
+            mapping[code] = token
+    return mapping
+
+
+_KEY_TOKEN_MAP = _build_key_token_map()
+
+
+def code_to_token(code: int) -> str:
+    """Код evdev -> токен, понятный `parse_keys` (для записи и подписей)."""
+    if code >= ecodes.BTN_MISC:
+        return button_name(code)
+    friendly = _KEY_TOKEN_MAP.get(code)
+    if friendly:
+        return friendly
+    name = ecodes.KEY.get(code)
+    if isinstance(name, tuple):
+        name = name[0]
+    if isinstance(name, str) and name.startswith("KEY_"):
+        short = name[len("KEY_") :]
+        # F1..F15 и однобуквенные имена parse_keys понимает и без префикса KEY_.
+        if len(short) == 1:
+            return short
+        if short[0] == "F" and short[1:].isdigit() and 1 <= int(short[1:]) <= 15:
+            return short
+        return name
+    return str(code)
+
 
 def _resolve_key(token: str) -> int:
     token = token.strip()
@@ -139,36 +213,7 @@ def _resolve_key(token: str) -> int:
     if lowered in _MODIFIER_ALIASES:
         return ecodes.ecodes[_MODIFIER_ALIASES[lowered]]
 
-    named = {
-        "arrowup": "KEY_UP",
-        "up": "KEY_UP",
-        "arrowdown": "KEY_DOWN",
-        "down": "KEY_DOWN",
-        "arrowleft": "KEY_LEFT",
-        "left": "KEY_LEFT",
-        "arrowright": "KEY_RIGHT",
-        "right": "KEY_RIGHT",
-        "home": "KEY_HOME",
-        "end": "KEY_END",
-        "insert": "KEY_INSERT",
-        "esc": "KEY_ESC",
-        "escape": "KEY_ESC",
-        "enter": "KEY_ENTER",
-        "space": "KEY_SPACE",
-        "tab": "KEY_TAB",
-        "backspace": "KEY_BACKSPACE",
-        "delete": "KEY_DELETE",
-        "pgup": "KEY_PAGEUP",
-        "pgdn": "KEY_PAGEDOWN",
-        "pageup": "KEY_PAGEUP",
-        "pagedown": "KEY_PAGEDOWN",
-        "playpause": "KEY_PLAYPAUSE",
-        "volumeup": "KEY_VOLUMEUP",
-        "volumedown": "KEY_VOLUMEDOWN",
-        "mute": "KEY_MUTE",
-        "nextsong": "KEY_NEXTSONG",
-        "previoussong": "KEY_PREVIOUSSONG",
-    }
+    named = NAMED_KEYS
     if lowered in named:
         return ecodes.ecodes[named[lowered]]
 
@@ -234,8 +279,10 @@ __all__ = [
     "ActionError",
     "ActionKind",
     "MOUSE_BUTTONS",
+    "NAMED_KEYS",
     "button_code",
     "button_name",
+    "code_to_token",
     "modifier_codes",
     "non_modifier_codes",
     "parse_action",

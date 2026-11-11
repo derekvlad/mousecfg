@@ -41,6 +41,9 @@ class DeviceRuntime:
     input_info: InputDeviceInfo | None = None
     dpi: int | None = None
     report_rate_ms: int | None = None
+    # Пользователь выключил ремап через трей: тогда смена профиля не поднимает
+    # перехват заново, пока его не включат обратно.
+    remap_disabled: bool = False
     last_error: str = ""
 
     @property
@@ -150,11 +153,16 @@ class Daemon:
 
         dpi = None
         rate_ms = None
+        lighting_supported = False
         try:
             dpi = opened.device.get_dpi()
             rate_ms = opened.device.get_rate_ms()
         except Exception as exc:  # noqa: BLE001
             logger.debug("DPI/rate недоступны у %s: %s", node.path, exc)
+        try:
+            lighting_supported = opened.device.has_feature(0x8071)
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("подсветка недоступна у %s: %s", node.path, exc)
         finally:
             opened.close()
 
@@ -165,6 +173,7 @@ class Daemon:
         state.usb_address = node.usb_address
         state.path = node.path
         state.mode = mode
+        state.lighting_supported = lighting_supported
         state.seen_at = time.time()
         state.profiles_file = state.profiles_file or str(self.options.profiles_dir / f"{_slug(state.name)}.toml")
         self.state[key] = state
@@ -246,7 +255,7 @@ class Daemon:
         event-узел запоминается всегда, даже если текущий профиль без кнопок:
         иначе при переключении на профиль с кнопками перехват уже не поднять.
         """
-        if runtime.profile_set is None:
+        if runtime.profile_set is None or runtime.remap_disabled:
             return
 
         try:
@@ -282,7 +291,7 @@ class Daemon:
     def _restart_remap(self, runtime: DeviceRuntime) -> None:
         """Перезапустить перехват с новым набором кнопок."""
         runtime.stop()
-        if runtime.profile_set is None:
+        if runtime.profile_set is None or runtime.remap_disabled:
             return
         chosen = runtime.active_profile
         if chosen is None or not chosen.buttons:
@@ -379,12 +388,26 @@ class Daemon:
             return [ipc.serialize(info) for info in iter_input_devices()]
         if method == "list-macros":
             return {"macros": self._all_macros()}
+        if method == "macro-upsert":
+            return self._rpc_macro_upsert(params)
+        if method == "macro-remove":
+            return self._rpc_macro_remove(params)
         if method == "apply-profile":
             return self._rpc_apply(params)
         if method == "set-dpi":
             return self._rpc_set(params, "dpi")
         if method == "set-rate":
             return self._rpc_set(params, "report_rate_ms")
+        if method == "set-lighting":
+            return self._rpc_set_lighting(params)
+        if method == "profile-activate":
+            return self._rpc_activate(params)
+        if method == "profile-next":
+            return self._rpc_cycle_profile(params, step=1)
+        if method == "profile-prev":
+            return self._rpc_cycle_profile(params, step=-1)
+        if method == "set-remap":
+            return self._rpc_set_remap(params)
         if method == "reload":
             for runtime in self.devices.values():
                 self._load_profile_set(runtime)
@@ -402,13 +425,23 @@ class Daemon:
         data = ipc.serialize(asdict(runtime.state))
         data["last_error"] = runtime.last_error
         data["remap_active"] = runtime.remapper is not None
+        data["remap_enabled"] = not runtime.remap_disabled
         data["profiles"] = runtime.profile_ids
         data["profile_details"] = self._profile_details(runtime)
         data["dpi"] = runtime.dpi
         data["report_rate_ms"] = runtime.report_rate_ms
+        data["lighting_supported"] = self._lighting_supported(runtime)
         if runtime.active_profile is not None:
             data["buttons_plan"] = engine.plan_button_actions(runtime.active_profile)
         return data
+
+    def _lighting_supported(self, runtime: DeviceRuntime) -> bool:
+        """Есть ли у устройства фича подсветки (без открытия hidraw каждый тик).
+
+        Наличие фичи определяется один раз при подключении. Значение храним
+        в state, чтобы `status` был дешёвым.
+        """
+        return bool(getattr(runtime.state, "lighting_supported", False))
 
     def _profile_details(self, runtime: DeviceRuntime) -> list[dict]:
         if runtime.profile_set is None:
@@ -422,6 +455,7 @@ class Daemon:
                 "buttons": ipc.serialize(profile.buttons),
                 "match_apps": list(profile.match_apps),
                 "match_serials": list(profile.match_serials),
+                "lighting": ipc.serialize(profile.lighting),
             }
             for profile in runtime.profile_set.profiles
         ]
@@ -479,14 +513,152 @@ class Daemon:
                 read_back = opened.device.get_rate_ms()
         return {what: read_back, "requested": value}
 
+    def _rpc_set_remap(self, params: dict) -> dict:
+        """Включить/выключить ремап кнопок (для трея)."""
+        runtime = self._runtime_or_error(str(params.get("device", "")))
+        enabled = bool(params.get("enabled", True))
+        runtime.remap_disabled = not enabled
+        if enabled:
+            self._start_remap(runtime)
+        else:
+            runtime.stop()
+        return {"remap_active": runtime.remapper is not None, "enabled": enabled}
+
+    def _rpc_set_lighting(self, params: dict) -> dict:
+        """Включить подсветку волатильно (fn 0x10; NvConfig не трогается)."""
+        runtime = self._runtime_or_error(str(params.get("device", "")))
+        effect = str(params.get("effect", "static")).lower()
+        params_block = {
+            "effect": effect,
+            "zone": int(params.get("zone", 0)),
+        }
+        for key in ("color", "brightness", "period", "intensity", "form", "ramp", "speed", "direction"):
+            if params.get(key) is not None:
+                params_block[key] = params[key]
+        profiles.validate_lighting(params_block)
+
+        from .hidpp.device import LIGHTING_EFFECTS
+
+        effects_by_name = {name: effect_id for effect_id, (name, _) in LIGHTING_EFFECTS.items()}
+        effect_id = effects_by_name.get(effect)
+        if effect_id is None:
+            raise ipc.IpcError(f"эффект подсветки {effect!r} неизвестен")
+
+        schema = LIGHTING_EFFECTS[effect_id][1]
+        device_params: dict[str, int] = {}
+        if "color" in params_block:
+            device_params["color"] = profiles.parse_color(params_block["color"]) or 0
+        for key in ("period", "intensity", "form", "ramp", "speed", "direction"):
+            if key in params_block and key in schema:
+                device_params[key] = int(params_block[key])
+
+        with session.open_device(
+            runtime.state.path,
+            allow_onboard_switch=self.options.allow_onboard_switch,
+            dry_run=self.options.dry_run,
+        ) as opened:
+            slot = opened.device.set_lighting(effect_id, device_params, zone=params_block["zone"])
+        return {"effect": effect, "slot": slot, "zone": params_block["zone"], "params": device_params}
+
+    def _rpc_activate(self, params: dict) -> dict:
+        """Переключить устройство на профиль по id (для хоткея/трея)."""
+        runtime = self._runtime_or_error(str(params.get("device", "")))
+        profile_id = str(params.get("profile", ""))
+        if runtime.profile_set is None:
+            raise ipc.IpcError(f"у {runtime.state.name}: нет файла профилей {runtime.state.profiles_file}")
+        chosen = next((item for item in runtime.profile_set.profiles if item.id == profile_id), None)
+        if chosen is None:
+            raise ipc.IpcError(f"профиль {profile_id!r} не найден")
+
+        with session.open_device(
+            runtime.state.path,
+            allow_onboard_switch=self.options.allow_onboard_switch,
+            dry_run=self.options.dry_run,
+        ) as opened:
+            result = engine.apply_profile(opened.device, chosen)
+        runtime.active_profile = chosen
+        runtime.state.active_profile = chosen.id
+        if "dpi" in result.applied:
+            runtime.dpi = int(result.applied["dpi"])
+        if "report_rate_ms" in result.applied:
+            runtime.report_rate_ms = int(result.applied["report_rate_ms"])
+        registry.save_state(self.state)
+        if self.options.apply_buttons:
+            self._restart_remap(runtime)
+        self.server.publish({"type": "profile-applied", "device": runtime.key, "result": result.describe()})
+        return {"active_profile": chosen.id, "result": result.describe()}
+
+    def _rpc_cycle_profile(self, params: dict, *, step: int) -> dict:
+        """Следующий/предыдущий профиль устройства (листание по кругу)."""
+        runtime = self._runtime_or_error(str(params.get("device", "")))
+        profile_ids = runtime.profile_ids
+        if not profile_ids:
+            raise ipc.IpcError(f"у {runtime.state.name}: нет профилей")
+        current = runtime.state.active_profile or profile_ids[0]
+        index = (
+            (profile_ids.index(current) + step) % len(profile_ids) if current in profile_ids else 0
+        )
+        return self._rpc_activate({"device": runtime.key, "profile": profile_ids[index]})
+
+
     def _all_macros(self) -> list[dict]:
         result: list[dict] = []
         for runtime in self.devices.values():
             if runtime.profile_set is None:
                 continue
             for macro in parse_macros(runtime.profile_set.macros_raw).values():
-                result.append({"id": macro.id, "name": macro.name, "describe": macro.describe()})
+                result.append(
+                    {
+                        "id": macro.id,
+                        "name": macro.name,
+                        "describe": macro.describe(),
+                        "steps": [step.describe() for step in macro.steps],
+                    }
+                )
         return result
+
+    def _rpc_macro_upsert(self, params: dict) -> dict:
+        """Добавить или заменить макрос в файле профилей устройства.
+
+        Макрос — это данные на хосте; в мышь ничего не пишется. Шаги приходят
+        как список словарей {'tap'|'key'|'wait', 'delay_ms'} — ровно тот вид,
+        который отдаёт запись макроса в GUI.
+        """
+        runtime = self._runtime_or_error(str(params.get("device", "")))
+        if runtime.profile_set is None:
+            raise ipc.IpcError(f"у {runtime.state.name}: нет файла профилей {runtime.state.profiles_file}")
+        raw = {
+            "id": str(params["id"]),
+            "name": str(params.get("name", "")),
+            "interval_ms": int(params.get("interval_ms") or 40),
+            "steps": list(params.get("steps") or []),
+        }
+        if not raw["steps"]:
+            raise ipc.IpcError("макрос без шагов не сохраняется")
+        try:
+            parse_macros([raw])  # проверяем до записи
+        except (ActionError, ValueError) as exc:
+            raise ipc.IpcError(str(exc)) from exc
+
+        path = Path(runtime.state.profiles_file)
+        try:
+            replaced = profiles.upsert_macro(path, raw, replace=bool(params.get("replace", True)))
+        except profiles.ProfileError as exc:
+            raise ipc.IpcError(str(exc)) from exc
+        self._load_profile_set(runtime)
+        return {"id": raw["id"], "replaced": replaced, "path": str(path)}
+
+    def _rpc_macro_remove(self, params: dict) -> dict:
+        runtime = self._runtime_or_error(str(params.get("device", "")))
+        if runtime.profile_set is None:
+            raise ipc.IpcError(f"у {runtime.state.name}: нет файла профилей {runtime.state.profiles_file}")
+        path = Path(runtime.state.profiles_file)
+        try:
+            profiles.remove_macro(path, str(params["id"]))
+        except (profiles.ProfileError, OSError) as exc:
+            raise ipc.IpcError(str(exc)) from exc
+        self._load_profile_set(runtime)
+        return {"removed": str(params["id"]), "path": str(path)}
 
     # -- редактирование профилей ----------------------------------------
     def _runtime_or_error(self, key: str) -> DeviceRuntime:
@@ -516,6 +688,7 @@ class Daemon:
             buttons=dict(params.get("buttons") or {}),
             match_apps=[str(item) for item in params.get("match_apps") or []],
             match_serials=[str(item) for item in params.get("match_serials") or []],
+            lighting=profiles.parse_lighting(params.get("lighting")) if params.get("lighting") else None,
         )
 
         path = Path(runtime.state.profiles_file)

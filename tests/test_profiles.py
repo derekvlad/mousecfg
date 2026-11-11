@@ -277,3 +277,69 @@ def test_render_macro_is_parseable(tmp_path):
     assert profiles.load_profile_file(path).macros_raw[0]["steps"] == raw["steps"]
 
 
+LIGHTING = """
+version = 1
+
+[[profile]]
+id = "glow"
+dpi = 1600
+[profile.lighting]
+effect = "breathe"
+color = "#00ff88"
+brightness = 70
+period = 4000
+"""
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [("#ff0000", 0xFF0000), ("red", 0xFF0000), ("#f00", 0xFF0000), (0x00FF00, 0x00FF00), ("0000ff", 0x0000FF)],
+)
+def test_parse_color(value, expected):
+    assert profiles.parse_color(value) == expected
+
+
+def test_parse_color_rejects_garbage():
+    with pytest.raises(profiles.ProfileError):
+        profiles.parse_color("радуга")
+    with pytest.raises(profiles.ProfileError):
+        profiles.parse_color("#12345")
+    with pytest.raises(profiles.ProfileError):
+        profiles.parse_color(True)
+
+
+def test_lighting_block_is_parsed():
+    parsed = profiles.parse_profiles(LIGHTING)
+    assert parsed.profiles[0].lighting == {
+        "effect": "breathe",
+        "color": 0x00FF88,
+        "brightness": 70,
+        "period": 4000,
+    }
+
+
+def test_unknown_lighting_effect_is_rejected():
+    text = LIGHTING.replace('effect = "breathe"', 'effect = "strobe"')
+    with pytest.raises(profiles.ProfileError, match="эффект"):
+        profiles.parse_profiles(text)
+
+
+def test_lighting_brightness_range_is_checked():
+    text = LIGHTING.replace("brightness = 70", "brightness = 150")
+    with pytest.raises(profiles.ProfileError, match="яркост"):
+        profiles.parse_profiles(text)
+
+
+def test_lighting_round_trips_through_render():
+    profile = profiles.Profile(
+        id="glow",
+        dpi=1600,
+        lighting={"effect": "static", "color": 0x123456, "brightness": 40},
+    )
+    text = profiles.render_profile(profile)
+    assert "[profile.lighting]" in text
+    parsed = profiles.parse_profiles("version = 1\n\n" + text + "\n")
+    assert parsed.profiles[0].lighting == profile.lighting
+
+
+

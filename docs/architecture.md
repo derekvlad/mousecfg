@@ -8,8 +8,8 @@
 ## Слои
 
 ```
-GUI (GTK4/libadwaita)        CLI (mousecfg)
-        \                      /
+GUI (GTK4/libadwaita)   CLI (mousecfg)   трей (GTK3 + AppIndicator3)
+        \                      /              /
          JSON-RPC через UNIX-сокет
                   |
           демон (systemd --user)
@@ -17,6 +17,7 @@ GUI (GTK4/libadwaita)        CLI (mousecfg)
           ├── profiles     — TOML-схема, хранилище, сопоставление
           ├── apply        — применение профиля, повтор при hotplug
           ├── appwatch     — активное приложение → выбор профиля
+          ├── lighting     — волатильные эффекты подсветки
           └── evdev/uinput — ремап кнопок и макросы
                   |
           hidpp: transport → safeplane → guard → device
@@ -71,7 +72,10 @@ Software ID `0x09` (свободен от Solaar `0x0B`, OpenRGB `0x07`, G HUB `
 | `ping`, `status` | состояние демона, активное приложение, устройства |
 | `list-devices`, `list-input-devices`, `list-macros` | инвентарь |
 | `apply-profile` | применить профиль по id |
-| `set-dpi`, `set-rate` | изменить одну настройку волатильно |
+| `set-dpi`, `set-rate`, `set-lighting` | изменить одну настройку волатильно |
+| `profile-activate`, `profile-next`, `profile-prev` | переключить профиль (трей и хоткеи) |
+| `macro-upsert`, `macro-remove` | сохранить/удалить макрос (запись из GUI) |
+| `set-remap` | включить/выключить ремап кнопок (трей) |
 | `reload` | перечитать TOML-файлы и применить заново |
 | `subscribe` | поток событий (`device-added`, `profile-applied`) |
 
@@ -105,4 +109,31 @@ Software ID `0x09` (свободен от Solaar `0x0B`, OpenRGB `0x07`, G HUB `
 * Чтение событий идёт через `select` с таймаутом, а не через блокирующий
   `read_loop()`: иначе перехват не выключить, пока не придёт следующее
   событие (на неподвижной мыши — никогда).
+
+## Подсветка
+
+Эффект подсветки — такая же волатильная настройка, как DPI и report rate.
+`guard` разрешает только волатильную запись `RGB_EFFECTS 0x8071/0x10`;
+персистентная запись NvConfig (`0x8071/0x30`) запрещена, как и всё, что
+попадает в энергонезависимую память. Подсветка хранится в профиле
+(`[profile.lighting]`) и применяется тем же `engine.apply_profile()`.
+
+Цвет в профиле — целое `0xRRGGBB`, но писать можно `#rrggbb`, `rrggbb` или
+именем (`red`, `blue`). Яркость (0..100) превращается в байт `intensity`,
+если эффект его знает; у `static` яркость притемняет сам цвет, потому что
+отдельного параметра интенсивности у него нет.
+
+## Трей и глобальные хоткеи
+
+Трей — отдельный процесс GTK3 + AppIndicator3 (`mousecfg-tray`), потому что
+AppIndicator3 несовместим с GTK4/libadwaita в одном процессе. Устройство он
+не открывает: все действия идут через тот же JSON-RPC.
+
+Смена профиля по глобальному хоткею сделана через портал
+`org.freedesktop.portal.GlobalShortcuts`. У портала жёсткое требование: app
+id выводится из имени systemd-юнита (cgroup), вида
+`app-<app-id>-<суффикс>.scope`. Поэтому трей при запуске сам заходит в scope
+`app-io.github.mousecfg.MouseCfg-tray.scope` через `systemd-run --user
+--scope`. Ответы портала асинхронные (`Response`), нажатия приходят сигналом
+`Activated`.
 

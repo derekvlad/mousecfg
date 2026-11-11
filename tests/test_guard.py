@@ -14,6 +14,15 @@ def test_volatile_settings_allowed():
     guard.check(FeatureId.ADJUSTABLE_DPI, 0x20)
 
 
+def test_lighting_volatile_allowed_persistent_denied():
+    """Подсветка: волатильная запись эффекта (0x10) разрешена, NvConfig (0x30) — нет."""
+    rule = guard.check(FeatureId.RGB_EFFECTS, 0x10)
+    assert rule.classification is guard.Classification.VOLATILE
+    guard.check(FeatureId.RGB_EFFECTS, 0x00)  # чтение зон/эффектов
+    with pytest.raises(guard.DeniedCommand):
+        guard.check(FeatureId.RGB_EFFECTS, 0x30)
+
+
 @pytest.mark.parametrize(
     ("feature", "function"),
     [
