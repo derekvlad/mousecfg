@@ -131,6 +131,7 @@ mousecfg profiles-check       # проверить TOML-профили
 mousecfg status               # состояние демона
 mousecfg devices              # устройства под управлением демона
 mousecfg inputs               # evdev-узлы мышей (для ремапа кнопок)
+mousecfg profile activate game # выбрать профиль вручную (закрепляется)
 mousecfg profile next         # переключить на следующий профиль (для хоткея)
 mousecfg daemon -v            # запустить демон на переднем плане
 mousecfg run-profile examples/g102-buttons.toml   # ремап без демона
@@ -343,6 +344,38 @@ PYTHONPATH=src python3 scripts/evdev-selftest.py
 - `docs/device-matrix.md` — что проверено на реальном железе;
 - `docs/architecture.md` — слои и почему так;
 - `docs/licensing.md` — лицензии и происхождение кода.
+
+## Разработка
+
+```sh
+git clone https://github.com/mousecfg/mousecfg
+cd mousecfg
+python3 -m venv --system-site-packages .venv
+.venv/bin/pip install -e ".[dev,input]"
+
+# тесты (нужны только исходники; графические тесты пропускаются без дисплея)
+PYTHONPATH=src .venv/bin/python -m pytest
+
+# линтер
+.venv/bin/ruff check src tests scripts
+```
+
+Правила проекта:
+
+- **ничего не пишется во встроенную память мыши.** Любая команда, попадающая
+  в энергонезависимую память, отклоняется в `hidpp/guard.py`; тесты
+  `tests/test_guard.py` и `tests/test_safeplane.py` это стерегут.
+- Профили, макросы и подсветка — данные на хосте и волатильные HID++-команды.
+- Чужой код не копируется: протокол разбирается по публичной документации и по
+  поведению; подробнее — `docs/licensing.md`.
+
+Полезные скрипты:
+
+```sh
+python3 scripts/capture-hid.py -- python3 -m mousecfg set-dpi 1600   # журнал кадров
+python3 scripts/replug-test.py                                      # проверка волатильности
+PYTHONPATH=src python3 scripts/evdev-selftest.py                    # ремап без реальной мыши
+```
 
 ## Лицензия
 
