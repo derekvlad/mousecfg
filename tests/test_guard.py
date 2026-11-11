@@ -23,6 +23,17 @@ def test_lighting_volatile_allowed_persistent_denied():
         guard.check(FeatureId.RGB_EFFECTS, 0x30)
 
 
+def test_lighting_sw_control_claim_is_volatile():
+    """Claim SW-контроля (0x50) — волатильная команда, разрешена.
+
+    Без неё прошивка рисует цвет onboard-профиля и игнорирует наши эффекты.
+    Проверено на железе: это RAM-состояние, не запись в память.
+    """
+    rule = guard.check(FeatureId.RGB_EFFECTS, 0x50)
+    assert rule.classification is guard.Classification.VOLATILE
+    assert rule.mutating
+
+
 @pytest.mark.parametrize(
     ("feature", "function"),
     [

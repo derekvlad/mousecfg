@@ -75,6 +75,14 @@ def lighting_effect_name(effect_id: int) -> str:
     return known[0] if known else f"effect-{effect_id:#04x}"
 
 
+# Передача управления подсветкой хосту (RGB_EFFECTS, fn 0x50).
+# Формат: [subfn=0x01 «set», mode=0x03 «полный SW-контроль», flags].
+# flags=0x04 (NvConfig) — как у Solaar для этой серии (rgb_power.SW_ACTIVE).
+# Команда волатильная: живёт в RAM до отключения мыши.
+SW_CONTROL_CLAIM = bytes((0x01, 0x03, 0x04))
+SW_CONTROL_RELEASE = bytes((0x01, 0x00, 0x00))
+
+
 def _lighting_effect_bytes(slot: int, effect_id: int, params: dict[str, int]) -> bytes:
     """Собрать 11-байтовое тело эффекта: слот + 10 байтов параметров."""
     schema = LIGHTING_EFFECTS.get(effect_id, (None, {}))[1]
@@ -478,7 +486,11 @@ class HidppDevice:
                 )
 
         payload = _lighting_effect_bytes(used_slot, effect_id, params)
-        # Префикс — номер зоны, суффикс — режим активации (0x01 у Solaar).
+        # Сначала забираем управление подсветкой у прошивки (вolaтильно),
+        # иначе она продолжает рисовать цвет onboard-профиля и наши эффекты
+        # выглядят как «ничего не происходит». Префикс — номер зоны,
+        # суффикс — режим активации (0x01 у Solaar).
+        self.request(FeatureId.RGB_EFFECTS, 0x50, SW_CONTROL_CLAIM)
         self.request(FeatureId.RGB_EFFECTS, 0x10, bytes((zone,)) + payload + b"\x01")
         return used_slot
 

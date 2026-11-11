@@ -130,16 +130,19 @@ class MacroRecordingDialog(Adw.Window):
         self.record_button = Gtk.ToggleButton(label="Записать")
         self.record_button.add_css_class("suggested-action")
         self.record_button.connect("toggled", self._on_record_toggled)
-        steps_group.set_header_suffix(self.record_button)
+        clear_button = Gtk.Button(label="Очистить")
+        clear_button.connect("clicked", lambda *_: self._clear())
+        # libadwaita 1.x знает только set_header_suffix, поэтому обе кнопки
+        # кладём в один контейнер (footer_suffix появился позже).
+        header_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        header_box.append(clear_button)
+        header_box.append(self.record_button)
+        steps_group.set_header_suffix(header_box)
 
         self.steps_list = Gtk.ListBox()
         self.steps_list.set_selection_mode(Gtk.SelectionMode.NONE)
         self.steps_list.add_css_class("boxed-list")
         steps_group.add(self.steps_list)
-
-        clear_button = Gtk.Button(label="Очистить")
-        clear_button.connect("clicked", lambda *_: self._clear())
-        steps_group.set_footer_suffix(clear_button)
 
         page.add(meta)
         page.add(steps_group)

@@ -74,6 +74,7 @@ _FUNCTION_NAMES: dict[tuple[int, int], str] = {
     (FeatureId.MOUSE_BUTTON_SPY, 0x20): "setButtonEcho",
     (FeatureId.RGB_EFFECTS, 0x00): "getInfo/zone/effect",
     (FeatureId.RGB_EFFECTS, 0x10): "setZoneEffect",
+    (FeatureId.RGB_EFFECTS, 0x50): "setSwControl",
     (FeatureId.RGB_EFFECTS, 0x30): "setNvConfig",
     (FeatureId.PER_KEY_LIGHTING_V2, 0x00): "getInfo",
     (FeatureId.PER_KEY_LIGHTING_V2, 0x10): "getZoneInfo",
@@ -146,6 +147,14 @@ _allow(
     mutating=True,
 )
 _allow(FeatureId.REPORT_RATE, 0x20, "смена частоты опроса: волатильно", mutating=True)
+_allow(
+    FeatureId.RGB_EFFECTS,
+    0x50,
+    "передача управления подсветкой хосту (SW control). Волатильно: "
+    "живёт в RAM до отключения мыши; без него прошивка рисует цвет "
+    "onboard-профиля и игнорирует наши эффекты",
+    mutating=True,
+)
 _allow(
     FeatureId.RGB_EFFECTS,
     0x10,
