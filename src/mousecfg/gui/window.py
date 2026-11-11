@@ -32,6 +32,39 @@ LIGHTING_EFFECT_CHOICES: tuple[str, ...] = (
 # Подсветка есть не у каждого устройства; значение берём из status.
 DEFAULT_LIGHTING_COLOR = "#00a0ff"
 
+# Кнопки мыши, которые можно назначить в профиле, и их подписи.
+# side1 — это «задняя боковая» кнопка (её часто зовут button4/Back),
+# side2 — «передняя боковая» (button5/Forward).
+MOUSE_BUTTON_CHOICES: tuple[str, ...] = ("left", "middle", "right", "side1", "side2", "dpi")
+MOUSE_BUTTON_LABELS: dict[str, str] = {
+    "left": "left — левая",
+    "middle": "middle — средняя (колесо)",
+    "right": "right — правая",
+    "side1": "side1 — задняя боковая (button4/Back)",
+    "side2": "side2 — передняя боковая (button5/Forward)",
+    "dpi": "dpi — кнопка переключения DPI",
+}
+
+
+def _describe_binding(action: object) -> str:
+    """Человекочитаемое описание действия кнопки для списка в диалоге."""
+    if isinstance(action, dict):
+        if "macro" in action:
+            return f"макрос {action['macro']}"
+        if "key" in action:
+            return f"клавиши {action['key']}"
+        return str(action)
+    return str(action)
+
+
+def _macro_id_for(profile_id: str, button: str) -> str:
+    """Id макроса по профилю и кнопке: удобно и без пробелов."""
+    safe = "".join(ch if ch.isalnum() or ch in "_-" else "-" for ch in profile_id)
+    while "--" in safe:
+        safe = safe.replace("--", "-")
+    safe = safe.strip("-") or "profile"
+    return f"{safe}-{button}"
+
 
 def _buttons_to_text(buttons: object) -> str:
     """Словарь кнопок -> строка 'side1=copy, middle=macro:burst'."""
@@ -425,10 +458,51 @@ class MainWindow(Adw.ApplicationWindow):
         )
         dialog.present()
 
-    def _save_recorded_macro(self, macro_id: str, interval_ms: int, steps: list[dict]) -> None:
+    def _record_macro_for_button(
+        self,
+        profile_id: str,
+        button: str,
+        buttons_row: Adw.EntryRow,
+    ) -> None:
+        """Записать макрос для выбранной кнопки профиля.
+
+        Сначала выбирается кнопка мыши, затем открывается запись нажатий.
+        Готовый макрос получает предсказуемый id (профиль-кнопка) и сразу
+        прописывается в назначения кнопки — пользователю не нужно вручную
+        вспоминать id макроса.
+        """
+        if not self.device_key:
+            self._toast("Устройство не выбрано")
+            return
+        profile_id = profile_id.strip()
+        if not profile_id:
+            self._toast("Сначала укажите id профиля")
+            return
+        macro_id = _macro_id_for(profile_id, button)
+        dialog = MacroRecordingDialog(
+            self,
+            macro_id=macro_id,
+            name=f"{profile_id}: {button}",
+            on_save=lambda mid, interval, steps: self._save_recorded_macro(
+                mid, interval, steps, button=button, buttons_row=buttons_row
+            ),
+        )
+        dialog.present()
+
+    def _save_recorded_macro(
+        self,
+        macro_id: str,
+        interval_ms: int,
+        steps: list[dict],
+        *,
+        button: str = "",
+        buttons_row: Adw.EntryRow | None = None,
+    ) -> None:
         self.client.call_async(
             "macro-upsert",
-            on_done=lambda _result: self._macro_saved(macro_id),
+            on_done=lambda _result: self._macro_saved(
+                macro_id, button=button, buttons_row=buttons_row
+            ),
             on_error=self._on_error,
             device=self.device_key,
             id=macro_id,
@@ -437,8 +511,21 @@ class MainWindow(Adw.ApplicationWindow):
             replace=True,
         )
 
-    def _macro_saved(self, macro_id: str) -> None:
-        self._toast(f"Макрос {macro_id} сохранён")
+    def _macro_saved(
+        self,
+        macro_id: str,
+        *,
+        button: str = "",
+        buttons_row: Adw.EntryRow | None = None,
+    ) -> None:
+        if button and buttons_row is not None:
+            # Привязываем макрос к выбранной кнопке прямо в строке назначений.
+            current = _parse_buttons_text(buttons_row.get_text())
+            current[button] = {"macro": macro_id}
+            buttons_row.set_text(_buttons_to_text(current))
+            self._toast(f"Макрос {macro_id} записан и назначен на кнопку {button}")
+        else:
+            self._toast(f"Макрос {macro_id} сохранён")
         self._refresh()
 
     def _remove_macro(self, macro_id: str) -> None:
@@ -581,6 +668,39 @@ class MainWindow(Adw.ApplicationWindow):
         buttons_row.set_text(_buttons_to_text(existing.get("buttons")))
         buttons_group.add(buttons_row)
 
+        # Кнопка -> макрос: выбираем кнопку мыши, затем пишем макрос нажатиями.
+        record_group = Adw.PreferencesGroup(
+            title="Кнопка и макрос",
+            description=(
+                "Выберите кнопку мыши, нажмите «Записать макрос» и нажмите нужные клавиши. "
+                "Макрос исполнит хост; в мышь ничего не пишется."
+            ),
+        )
+        button_choice = Adw.ComboRow(title="Кнопка мыши")
+        button_choice.set_model(Gtk.StringList.new([MOUSE_BUTTON_LABELS[name] for name in MOUSE_BUTTON_CHOICES]))
+        # По умолчанию подставляем боковую кнопку — её чаще всего и назначают.
+        button_choice.set_selected(MOUSE_BUTTON_CHOICES.index("side1"))
+        record_group.add(button_choice)
+
+        record_macro_button = Gtk.Button(label="Записать макрос")
+        record_macro_button.add_css_class("suggested-action")
+        record_macro_button.connect(
+            "clicked",
+            lambda *_: self._record_macro_for_button(
+                profile_id or id_row.get_text(),
+                MOUSE_BUTTON_CHOICES[int(button_choice.get_selected())],
+                buttons_row,
+            ),
+        )
+        bindings_row = Adw.ActionRow(title="Текущие назначения")
+        bindings_row.set_subtitle(_buttons_to_text(existing.get("buttons")) or "пока пусто")
+        bindings_row.add_suffix(record_macro_button)
+        record_group.add(bindings_row)
+        buttons_row.connect(
+            "changed",
+            lambda row: bindings_row.set_subtitle(row.get_text() or "пока пусто"),
+        )
+
         lighting_group = Adw.PreferencesGroup(
             title="Подсветка профиля",
             description="Применяется вместе с профилем; ничего не пишется в память мыши",
@@ -615,6 +735,7 @@ class MainWindow(Adw.ApplicationWindow):
 
         page.add(group)
         page.add(buttons_group)
+        page.add(record_group)
         page.add(lighting_group)
         toolbar.set_content(page)
 

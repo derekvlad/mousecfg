@@ -62,9 +62,10 @@
 | GUI | `mousecfg-gui` при запущенном демоне | окно строится, кнопка «Применить» переключает профиль (800↔1600) |
 | Права на evdev-узел | `data/70-mousecfg-input.rules` + `udevadm trigger` | `/dev/input/event3` доступен: `mousecfg inputs` показывает мышь и её кнопки |
 | Ремап кнопок | `mousecfg run-profile examples/g102-buttons.toml --seconds …` | `EVIOCGRAB` встаёт, события ретранслируются, `--seconds` корректно выключает перехват |
-| Подсветка волатильно | `mousecfg lighting --effect static --color '#ff0000'`, затем `breathe` | эффект включается, держится до переподключения; `fn 0x30` отклоняется как `DeniedCommand` |
-| Трей и хоткей | `mousecfg-tray` + панель StatusNotifierWatcher | иконка `mousecfg` регистрируется; портал принимает `BindShortcuts` (`next-profile`, `prev-profile`) |
-| Запись макроса в GUI | «Записать» в группе «Макросы», нажать `Ctrl+Shift+T` | шаг `ctrl+shift+T` появляется списком и сохраняется в файл профилей |
+| Подсветка волатильно | `mousecfg lighting --effect static --color '#ff0000' --brightness 50`, затем `breathe` | эффект включается, `static` притемняет цвет (0x800000), `breathe` шлёт `intensity`; держится до переподключения; `fn 0x30` отклоняется как `DeniedCommand` |
+| Трей и хоткей | `mousecfg-tray` + панель StatusNotifierWatcher | иконка `mousecfg` регистрируется; на niri трей портал не трогает и не плодит зависших окон |
+| Хоткей через niri | `mousecfg keybinds --install` + `niri msg action load-config-file`, затем `Alt+Shift+Right` | активный профиль переключается на следующий (`default`→`shooter`) |
+| Запись макроса в GUI | в диалоге профиля выбрать кнопку `side1`, «Записать макрос», нажать `Ctrl+Shift+T` | шаг `ctrl+shift+T` появляется списком, макрос сохраняется с id `профиль-side1` и подставляется в назначения кнопки |
 | Сквозная проверка evdev | виртуальный источник → `Remapper` → виртуальный приёмник | движение насквозь; `side1`→`ALT+LEFT`, `middle`→`CTRL+C`, `side2`→макрос; непривязанная `BTN_RIGHT` проходит как есть; p95 ≈ 0.4 мс |
 | Виртуальное устройство | `data/71-mousecfg-virtual.rules` | `/dev/input/eventN` устройства `mousecfg virtual input` получает ACL пользователя сессии |
 

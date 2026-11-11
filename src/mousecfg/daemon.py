@@ -546,8 +546,20 @@ class Daemon:
 
         schema = LIGHTING_EFFECTS[effect_id][1]
         device_params: dict[str, int] = {}
-        if "color" in params_block:
+        if "color" in params_block and "color" in schema:
             device_params["color"] = profiles.parse_color(params_block["color"]) or 0
+        brightness = params_block.get("brightness")
+        if brightness is not None:
+            brightness = int(brightness)
+            if "intensity" in schema:
+                device_params["intensity"] = max(0, min(255, round(brightness * 255 / 100)))
+            elif effect == "static" and "color" in schema:
+                # У static яркости как байта нет: притемняем сам цвет.
+                from .engine import _scale_color
+
+                device_params["color"] = _scale_color(
+                    device_params.get("color", 0xFFFFFF), brightness
+                )
         for key in ("period", "intensity", "form", "ramp", "speed", "direction"):
             if key in params_block and key in schema:
                 device_params[key] = int(params_block[key])

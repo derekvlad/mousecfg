@@ -15,7 +15,9 @@ app id по cgroup; иначе CreateSession падает с «An app id is requ
 from __future__ import annotations
 
 import logging
+import os
 from collections.abc import Callable, Iterable
+from pathlib import Path
 
 from gi.repository import Gio, GLib
 
@@ -32,6 +34,64 @@ DEFAULT_SHORTCUTS: dict[str, str] = {
     "next-profile": "Следующий профиль mousecfg",
     "prev-profile": "Предыдущий профиль mousecfg",
 }
+
+# Композиторы, на которых портал GlobalShortcuts не работает (нет бэкенда
+# либо бэкенд GNOME не может открыть Wayland-канал и плодит зависшие окна
+# «Add Keyboard Shortcuts»). Для них хоткей вешает сам композитор — см.
+# niri_keybinds() и `mousecfg keybinds`.
+_NO_PORTAL_COMPOSITORS = frozenset({"niri", "river", "hyprland", "sway"})
+
+# Как в niri называется действие в binds: spawn-sh "mousecfg profile next".
+NIRI_ACTIONS: dict[str, tuple[str, str]] = {
+    "next-profile": ("Alt+Shift+Right", "profile next"),
+    "prev-profile": ("Alt+Shift+Left", "profile next --prev"),
+}
+
+
+def current_compositor() -> str:
+    """Имя композитора в нижнем регистре (niri, hyprland, sway...)."""
+    desktop = os.environ.get("XDG_CURRENT_DESKTOP", "")
+    for name in desktop.split(":"):
+        if name.strip():
+            return name.strip().lower()
+    return ""
+
+
+def portal_supported() -> bool:
+    """Есть ли смысл в портале GlobalShortcuts на этом рабочем столе.
+
+    На niri/hyprland/wlroots портала нет: единственный бэкенд, объявляющий
+    GlobalShortcuts, — GNOME, а он под этими композиторами не открывает
+    сервисный Wayland-канал и вместо диалога показывает зависшие окна.
+    В этом случае хоткеи надо вешать в конфиге композитора.
+    """
+    return current_compositor() not in _NO_PORTAL_COMPOSITORS
+
+
+def niri_config_path() -> Path:
+    """Путь к конфигу niri (уважаем XDG_CONFIG_HOME)."""
+    base = os.environ.get("XDG_CONFIG_HOME") or str(Path.home() / ".config")
+    return Path(base) / "niri" / "config.kdl"
+
+
+def niri_keybinds(*, bindings: dict[str, tuple[str, str]] | None = None) -> str:
+    """Готовый блок binds для конфига niri.
+
+    Хоткей вешает сам niri командой `mousecfg profile next|prev` — это
+    надёжнее портала и не требует, чтобы трей жил в особом scope.
+    """
+    items = bindings or NIRI_ACTIONS
+    lines = [
+        "    // mousecfg: смена профиля мыши (вставьте внутрь блока binds { ... })",
+    ]
+    for hotkey, command in items.values():
+        lines.append(f'    {hotkey} {{ spawn-sh "mousecfg {command}"; }}')
+    return "\n".join(lines)
+
+
+def niri_keybinds_present(text: str) -> bool:
+    """Есть ли в тексте конфига niri уже наши хоткеи."""
+    return "mousecfg" in text and "profile next" in text
 
 
 class ShortcutError(RuntimeError):

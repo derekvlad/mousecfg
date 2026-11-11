@@ -142,6 +142,17 @@ def _build_parser() -> argparse.ArgumentParser:
     sub.add_parser("devices", parents=[common], help="устройства, которые видит демон")
     sub.add_parser("inputs", parents=[common], help="evdev-узлы мышей: где есть кнопки для ремапа")
 
+    keybinds = sub.add_parser(
+        "keybinds",
+        parents=[common],
+        help="показать хоткеи смены профиля для конфига композитора (niri и др.)",
+    )
+    keybinds.add_argument(
+        "--install",
+        action="store_true",
+        help="добавить блок в конфиг niri (с резервной копией)",
+    )
+
     daemon = sub.add_parser("daemon", parents=[common], help="запустить демон на переднем плане")
     daemon.add_argument("--profiles-dir", default=None)
     daemon.add_argument("--no-buttons", action="store_true")
@@ -405,20 +416,36 @@ def cmd_lighting(args: argparse.Namespace) -> int:
             )
             return 1
 
+        from .hidpp.device import LIGHTING_EFFECTS
+
+        schema = LIGHTING_EFFECTS.get(effect_id, (None, {}))[1]
         params: dict[str, int] = {}
-        if args.color is not None:
+        if args.color is not None and "color" in schema:
             params["color"] = profiles.parse_color(args.color) or 0
-        if args.period is not None:
+        if args.period is not None and "period" in schema:
             params["period"] = args.period
-        if args.intensity is not None:
+        if args.intensity is not None and "intensity" in schema:
             params["intensity"] = args.intensity
-        if args.form is not None:
+        if args.form is not None and "form" in schema:
             params["form"] = args.form
         if args.brightness is not None:
             if not 0 <= args.brightness <= 100:
                 print("Яркость должна быть 0..100", file=sys.stderr)
                 return 1
-            params["intensity"] = max(0, min(255, round(args.brightness * 255 / 100)))
+            intensity = max(0, min(255, round(args.brightness * 255 / 100)))
+            if "intensity" in schema:
+                params["intensity"] = intensity
+            elif effect_name == "static" and "color" in schema:
+                # У static яркости как байта нет: притемняем сам цвет.
+                from .engine import _scale_color
+
+                params["color"] = _scale_color(params.get("color", 0xFFFFFF), args.brightness)
+            else:
+                print(
+                    f"Эффект {effect_name!r} не поддерживает параметр яркости",
+                    file=sys.stderr,
+                )
+                return 1
 
         try:
             slot = device.set_lighting(effect_id, params, zone=args.zone)
@@ -992,6 +1019,63 @@ def cmd_inputs(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_keybinds(args: argparse.Namespace) -> int:
+    """Показать (и при желании поставить) хоткеи смены профиля.
+
+    Портал GlobalShortcuts работает не везде; на niri хоткей вешает сам
+    композитор. Команда печатает готовый блок binds и умеет дописать его в
+    конфиг niri, сохранив резервную копию.
+    """
+    from . import hotkeys
+
+    compositor = hotkeys.current_compositor() or "неизвестен"
+    block = hotkeys.niri_keybinds()
+    if args.json:
+        print(
+            json.dumps(
+                {
+                    "compositor": compositor,
+                    "portal_supported": hotkeys.portal_supported(),
+                    "config": str(hotkeys.niri_config_path()),
+                    "block": block,
+                },
+                ensure_ascii=False,
+                indent=2,
+            )
+        )
+        return 0
+
+    if hotkeys.portal_supported():
+        print(f"Композитор {compositor}: портал GlobalShortcuts доступен, трей поднимет хоткеи сам.")
+        return 0
+
+    path = hotkeys.niri_config_path()
+    print(f"Композитор {compositor}: портал GlobalShortcuts недоступен, хоткей вешает сам {compositor}.")
+    print(f"Вставьте это внутрь блока binds {{ ... }} в {path}:\n")
+    print(block)
+
+    if not args.install:
+        print("\nПроверить и применить: niri msg action load-config-file")
+        return 0
+
+    if not path.exists():
+        print(f"\nФайл {path} не найден: хоткеи не установлены.", file=sys.stderr)
+        return 1
+    text = path.read_text(encoding="utf-8")
+    if hotkeys.niri_keybinds_present(text):
+        print("\nХоткеи mousecfg уже есть в конфиге — ничего не меняю.")
+        return 0
+    backup = path.with_suffix(path.suffix + ".bak.mousecfg")
+    backup.write_text(text, encoding="utf-8")
+    # Дописываем блок в конец файла: niri принимает несколько блоков binds
+    # в одном файле и объединяет их.
+    suffix = "\n" if text.endswith("\n") else "\n\n"
+    path.write_text(text + suffix + "binds {\n" + block + "\n}\n", encoding="utf-8")
+    print(f"\nДобавлено в {path} (резервная копия: {backup}).")
+    print("Применить: niri msg action load-config-file")
+    return 0
+
+
 def cmd_daemon(args: argparse.Namespace) -> int:
     from pathlib import Path
 
@@ -1079,6 +1163,7 @@ def main(argv: list[str] | None = None) -> int:
         "status": cmd_status,
         "devices": cmd_devices,
         "inputs": cmd_inputs,
+        "keybinds": cmd_keybinds,
         "daemon": cmd_daemon,
         "run-profile": cmd_run_profile,
         "profile-add": cmd_profile_add,

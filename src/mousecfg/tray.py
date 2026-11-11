@@ -227,7 +227,19 @@ class Tray:
 
     # -- хоткеи ----------------------------------------------------------
     def start_shortcuts(self) -> None:
-        """Подписаться на глобальные хоткеи через портал (если возможно)."""
+        """Подписаться на глобальные хоткеи через портал (если возможно).
+
+        На niri/wlroots портала GlobalShortcuts нет: попытка его поднять не
+        только бесполезна, но и плодит зависшие окна «Add Keyboard Shortcuts».
+        Тогда хоткей вешает сам композитор — см. `mousecfg keybinds`.
+        """
+        if not hotkeys.portal_supported():
+            logger.info(
+                "портал GlobalShortcuts не поддерживается на %s: хоткеи вешаются в конфиге "
+                "композитора (mousecfg keybinds)",
+                hotkeys.current_compositor() or "этом рабочем столе",
+            )
+            return
         self._shortcuts = hotkeys.GlobalShortcuts(
             on_activated=self._on_shortcut, bus=None
         )
@@ -256,7 +268,8 @@ def main(argv: list[str] | None = None) -> int:
 
     # Портал хоткеев определяет app id по имени systemd-юнита. Заходим в
     # правильный scope сами, чтобы `mousecfg-tray` работал из любого места.
-    if not no_shortcuts:
+    # На niri портала нет — перезапуск в scope бессмысленен, поэтому пропускаем.
+    if not no_shortcuts and hotkeys.portal_supported():
         reexec_in_scope(args)
 
     if not ipc.Client().is_available():
