@@ -19,3 +19,10 @@ htmlcov/
 *.swp
 .idea/
 .vscode/
+
+# Сборка пакетов (packaging/aur): makepkg кладёт сюда исходники и пакеты
+packaging/aur/**/pkg/
+packaging/aur/**/src/
+packaging/aur/**/*.pkg.tar.*
+# Клон git-источника для mousecfg-git (имя совпадает с pkgname)
+packaging/aur/mousecfg-git/mousecfg-git/

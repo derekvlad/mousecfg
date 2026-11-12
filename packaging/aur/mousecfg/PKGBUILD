@@ -1,0 +1,67 @@
+# Maintainer: mousecfg contributors <mousecfg@localhost>
+#
+# Релизный пакет: собирается из tar-архива тега v$pkgver на GitHub.
+#
+# ВАЖНО: sha256sums нужно пересчитать после того, как тег запушен:
+#   git tag -a v0.1.0 -m "v0.1.0" && git push origin v0.1.0
+#   updpkgsums        # (из pacman-contrib) сам скачает архив и вставит сумму
+#
+# .SRCINFO для AUR сгенерировать так:
+#   makepkg --printsrcinfo > .SRCINFO
+
+pkgname=mousecfg
+pkgver=0.1.0
+pkgrel=1
+pkgdesc="Host-side profile manager for gaming mice (nothing is written to onboard memory)"
+arch=('any')
+url="https://github.com/derekvlad/mousecfg"
+license=('GPL-3.0-or-later')
+depends=('python' 'python-gobject' 'gtk4' 'libadwaita' 'gtk3' 'libappindicator' 'python-evdev')
+makedepends=('python-build' 'python-installer' 'python-setuptools' 'python-wheel')
+conflicts=('mousecfg-git')
+install="${pkgname}.install"
+source=("${pkgname}-${pkgver}.tar.gz::${url}/archive/refs/tags/v${pkgver}.tar.gz")
+# ЗАМЕНИТЬ после проставления тега (или запустить updpkgsums).
+sha256sums=('SKIP')
+
+build() {
+    cd "${pkgname}-${pkgver}"
+    python -m build --wheel --no-isolation
+}
+
+package() {
+    cd "${pkgname}-${pkgver}"
+
+    # Код и точки входа (mousecfg, mousecfg-daemon, mousecfg-gui, mousecfg-tray).
+    python -m installer --destdir="${pkgdir}" dist/*.whl
+
+    # Правила udev: доступ к hidraw/uinput и evdev-узлам для активной сессии.
+    # Номер файла важен (71-* должен сработать раньше 73-seat-late.rules).
+    install -Dm644 "data/60-mousecfg.rules" \
+        "${pkgdir}/usr/lib/udev/rules.d/60-mousecfg.rules"
+    install -Dm644 "data/70-mousecfg-input.rules" \
+        "${pkgdir}/usr/lib/udev/rules.d/70-mousecfg-input.rules"
+    install -Dm644 "data/71-mousecfg-virtual.rules" \
+        "${pkgdir}/usr/lib/udev/rules.d/71-mousecfg-virtual.rules"
+
+    # systemd --user: путь к entry point системный, а не домашний.
+    install -d "${pkgdir}/usr/lib/systemd/user"
+    sed 's#^ExecStart=.*#ExecStart=/usr/bin/mousecfg-daemon#' \
+        "data/mousecfg-daemon.service" \
+        > "${pkgdir}/usr/lib/systemd/user/mousecfg-daemon.service"
+    chmod 644 "${pkgdir}/usr/lib/systemd/user/mousecfg-daemon.service"
+
+    # Иконка и значок в меню.
+    install -Dm644 "data/icons/hicolor/scalable/apps/io.github.mousecfg.MouseCfg.svg" \
+        "${pkgdir}/usr/share/icons/hicolor/scalable/apps/io.github.mousecfg.MouseCfg.svg"
+    install -Dm644 "data/io.github.mousecfg.MouseCfg.desktop" \
+        "${pkgdir}/usr/share/applications/io.github.mousecfg.MouseCfg.desktop"
+
+    # Автозапуск трея. Exec= должен быть абсолютным: systemd-генератор
+    # XDG-autostart пропускает .desktop, если бинарник не найден в его PATH.
+    install -d "${pkgdir}/etc/xdg/autostart"
+    sed 's#^Exec=mousecfg-tray$#Exec=/usr/bin/mousecfg-tray#' \
+        "data/io.github.mousecfg.MouseCfg-tray.desktop" \
+        > "${pkgdir}/etc/xdg/autostart/io.github.mousecfg.MouseCfg-tray.desktop"
+    chmod 644 "${pkgdir}/etc/xdg/autostart/io.github.mousecfg.MouseCfg-tray.desktop"
+}
