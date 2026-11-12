@@ -3,14 +3,14 @@
 # Релизный пакет: собирается из tar-архива тега v$pkgver на GitHub.
 #
 # ВАЖНО: sha256sums нужно пересчитать после того, как тег запушен:
-#   git tag -a v0.1.0 -m "v0.1.0" && git push origin v0.1.0
+#   git tag -a v0.2.0 -m "v0.2.0" && git push origin v0.2.0
 #   updpkgsums        # (из pacman-contrib) сам скачает архив и вставит сумму
 #
 # .SRCINFO для AUR сгенерировать так:
 #   makepkg --printsrcinfo > .SRCINFO
 
 pkgname=mousecfg
-pkgver=0.1.0
+pkgver=0.2.0
 pkgrel=1
 pkgdesc="Host-side profile manager for gaming mice (nothing is written to onboard memory)"
 arch=('any')
@@ -23,7 +23,7 @@ install="${pkgname}.install"
 source=("${pkgname}-${pkgver}.tar.gz::${url}/archive/refs/tags/v${pkgver}.tar.gz")
 # Сумма архива тега v$pkgver. Пересчитать после выпуска новой версии:
 #   updpkgsums
-sha256sums=('c97ef539fec2637022fdb50a8ac0600d086ef70eb3814ac20f71bece285a72a5')
+sha256sums=('bf1f290888c773bd585d6f3edd1089097f34f9100eeb2a80e4040fb736cafc6b')
 
 build() {
     cd "${pkgname}-${pkgver}"

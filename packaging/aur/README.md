@@ -56,10 +56,10 @@ updpkgsums
    врать:
 
    ```sh
-   # pyproject.toml: version = "0.1.0"
-   git commit -am "release 0.1.0"
-   git tag -a v0.1.0 -m "v0.1.0"
-   git push origin main v0.1.0
+   # pyproject.toml: version = "0.2.0"
+   git commit -am "release 0.2.0"
+   git tag -a v0.2.0 -m "v0.2.0"
+   git push origin main v0.2.0
    cd packaging/aur/mousecfg && updpkgsums
    ```
 
