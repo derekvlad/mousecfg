@@ -1,11 +1,18 @@
 # mousecfg
 
+[![License: GPL-3.0-or-later](https://img.shields.io/badge/License-GPL--3.0--or--later-blue.svg)](https://www.gnu.org/licenses/gpl-3.0.html)
+[![Python](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/)
+[![Platform](https://img.shields.io/badge/platform-Linux-informational.svg)](#)
+[![Не пишет во флеш мыши](https://img.shields.io/badge/onboard%20memory-never%20written-success.svg)](#проверки-во-флеш-ничего-не-пишется)
+
 Управление игровыми мышами в Linux, где **профили живут на хосте**, а не в памяти мыши.
 
 Главное требование: при применении профиля в энергонезависимую память мыши
 (onboard memory / «флеш») не пишется ничего. Все настройки передаются
 волатильными HID++ командами и теряются при отключении мыши — демон
 применяет их заново при подключении.
+
+![Интерфейс mousecfg](docs/images/gui.png)
 
 ## Возможности
 

@@ -2,4 +2,5 @@
 
 from __future__ import annotations
 
-__version__ = "0.1.0.dev0"
+# Единственный источник версии: её же читает сборка (см. dynamic в pyproject.toml).
+__version__ = "0.1.0"

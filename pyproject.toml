@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "mousecfg"
-version = "0.1.0.dev0"
+dynamic = ["version"]
 description = "Host-side profile manager for gaming mice (Linux). Profiles live on the host; nothing is written to the mouse onboard memory."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -51,6 +51,10 @@ mousecfg-gui = "mousecfg.gui.app:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+# Версию берём из src/mousecfg/__init__.py — она же уходит в `mousecfg --version`.
+[tool.setuptools.dynamic]
+version = { attr = "mousecfg.__version__" }
 
 # udev-правила и unit-файл лежат в корне репозитория: их ставит человек
 # (нужен root), поэтому в пакет их не заворачиваем.
