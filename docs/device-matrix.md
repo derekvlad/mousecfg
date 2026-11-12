@@ -6,6 +6,7 @@
 ## Logitech G102 LIGHTSYNC (046d:c092)
 
 Проверено 2026-11-11, прошивка `U1 52.00.B0010`, HID++ 4.2, серийник `205C35585247`.
+Повторная проверка макросов после перезагрузки — 2026-11-12, systemd 262.
 
 | Что | Значение |
 |---|---|
@@ -67,13 +68,16 @@
 | Rate волатильно | `set-rate` 1/2/4/8 мс | значение принимается и читается обратно |
 | Демон | `mousecfg daemon -v` + `mousecfg status` | находит мышь, применяет `default`, видит активное приложение |
 | Профиль по приложению | профиль `browser` с `match_apps = ["Vivaldi-flatpak"]` | при активном Vivaldi DPI стал 3200, затем вернулся к 1600 |
-| GUI | `mousecfg-gui` при запущенном демоне | окно строится, кнопка «Применить» переключает профиль (800↔1600) || Права на evdev-узел | `data/70-mousecfg-input.rules` + `udevadm trigger` | `/dev/input/event3` доступен: `mousecfg inputs` показывает мышь и её кнопки |
+| GUI | `mousecfg-gui` при запущенном демоне | окно строится, кнопка «Применить» переключает профиль (800↔1600) |
+| Права на evdev-узел | `data/70-mousecfg-input.rules` + `udevadm trigger` | `/dev/input/event3` доступен: `getfacl` даёт `user:derek:rw-`, `mousecfg inputs` показывает мышь и её кнопки |
+| ACL переживает `change` | `udevadm test --action={add,change}` на event3 с правилами из `data/` | с `ACTION!="remove"` builtin `uaccess` попадает в очередь и на `add`, и на `change` (с `ACTION=="add"` — только на `add`; после перезагрузки ACL не появлялся) |
 | Ремап кнопок | `mousecfg run-profile examples/g102-buttons.toml --seconds …` | `EVIOCGRAB` встаёт, события ретранслируются, `--seconds` корректно выключает перехват |
 | Подсветка волатильно | `mousecfg lighting --effect static --color '#ff0000' --brightness 50`, затем `breathe` | эффект включается, `static` притемняет цвет (0x800000), `breathe` шлёт `intensity`; держится до переподключения; `fn 0x30` отклоняется как `DeniedCommand` |
 | Подсветка берёт SW-контроль | `mousecfg lighting --effect static --color '#00ff00'` на мыши в host | перед `setZoneEffect` уходит `setSwControl 01 03 04`; красный/зелёный/синий переключаются верно подряд (без claim цвет «залипал» на onboard-профиле) |
 | Трей и хоткей | `mousecfg-tray` + панель StatusNotifierWatcher | иконка `mousecfg` регистрируется; на niri трей портал не трогает и не плодит зависших окон |
 | Хоткей через niri | `mousecfg keybinds --install` + `niri msg action load-config-file`, затем `Alt+Shift+Right` | активный профиль переключается на следующий (`default`→`shooter`) |
 | Профиль не сбрасывается | `mousecfg profile activate game`, затем сменить активное окно | профиль остаётся `game` (раньше возвращался на первый, `default`); профиль с `match_apps` всё равно важнее |
+| Макросы после перезагрузки | после ребута переустановлено правило 70 → `udevadm trigger --subsystem-match=input`, демон перезапущен, нажаты боковые кнопки | `side2` → `ctrl+shift+F12`, `side1` → `ctrl+shift+F11`: на виртуальном узле видны нажатия `LEFTCTRL`+`LEFTSHIFT`+`F12`/`F11`. Демон пишет `remap_active: true`, ошибок в журнале нет |
 | Запись макроса в GUI | в диалоге профиля выбрать кнопку `side1`, «Записать макрос», нажать `Ctrl+Shift+T` | шаг `ctrl+shift+T` появляется списком, макрос сохраняется с id `профиль-side1` и подставляется в назначения кнопки |
 | Запись не зависит от раскладки | при русской раскладке записать `abc`, `Shift+1`, `-`, `F4` | в шагах ровно `A B C`, `shift+1`, `KEY_MINUS`, `F4` (раньше по символам почти всё терялось) |
 | Сквозная проверка evdev | виртуальный источник → `Remapper` → виртуальный приёмник | движение насквозь; `side1`→`ALT+LEFT`, `middle`→`CTRL+C`, `side2`→макрос; непривязанная `BTN_RIGHT` проходит как есть; p95 ≈ 0.4 мс |
