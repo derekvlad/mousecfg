@@ -14,6 +14,8 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
 
+from mousecfg.i18n import t
+
 from . import guard
 from .guard import DeniedCommand  # noqa: F401  (реэкспорт для удобства)
 from .transport import HidrawTransport
@@ -124,7 +126,7 @@ class SafePlane:
             signature = bytes((frame[2], 0x80 | (byte & 0xF0) | (byte & 0x0F)))
             if signature not in self._settled_persistent:
                 logger.warning(
-                    "персистентная операция %s (%#06x/%#04x): %s",
+                    t("персистентная операция %s (%#06x/%#04x): %s", "persistent operation %s (%#06x/%#04x): %s"),
                     name,
                     feature,
                     function,
@@ -132,13 +134,13 @@ class SafePlane:
                 )
                 self._settled_persistent.add(signature)
         else:
-            logger.debug("-> %s (%#06x/%#04x) %s", name, feature, function, payload.hex())
+            logger.debug(t("-> %s (%#06x/%#04x) %s", "-> %s (%#06x/%#04x) %s"), name, feature, function, payload.hex())
 
         if self.dry_run:
             if rule.mutating:
-                logger.info("[dry-run] изменяющий кадр не отправлен: %s", frame.hex())
+                logger.info(t("[dry-run] изменяющий кадр не отправлен: %s", "[dry-run] mutating frame not sent: %s"), frame.hex())
                 return False
-            logger.info("[dry-run] только чтение, кадр уходит: %s", frame.hex())
+            logger.info(t("[dry-run] только чтение, кадр уходит: %s", "[dry-run] read-only, frame is sent: %s"), frame.hex())
 
         self.transport.drain()
         self.transport.send(frame)

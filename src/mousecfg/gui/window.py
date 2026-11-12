@@ -13,6 +13,7 @@ from gi.repository import Adw, GLib, Gtk
 
 from mousecfg.gui.client import DaemonClient
 from mousecfg.gui.recorder import MacroRecordingDialog
+from mousecfg.i18n import t
 
 logger = logging.getLogger(__name__)
 
@@ -37,12 +38,12 @@ DEFAULT_LIGHTING_COLOR = "#00a0ff"
 # side2 — «передняя боковая» (button5/Forward).
 MOUSE_BUTTON_CHOICES: tuple[str, ...] = ("left", "middle", "right", "side1", "side2", "dpi")
 MOUSE_BUTTON_LABELS: dict[str, str] = {
-    "left": "left — левая",
-    "middle": "middle — средняя (колесо)",
-    "right": "right — правая",
-    "side1": "side1 — задняя боковая (button4/Back)",
-    "side2": "side2 — передняя боковая (button5/Forward)",
-    "dpi": "dpi — кнопка переключения DPI",
+    "left": t("left — левая", "left — left button"),
+    "middle": t("middle — средняя (колесо)", "middle — middle button (wheel)"),
+    "right": t("right — правая", "right — right button"),
+    "side1": t("side1 — задняя боковая (button4/Back)", "side1 — rear side button (button4/Back)"),
+    "side2": t("side2 — передняя боковая (button5/Forward)", "side2 — front side button (button5/Forward)"),
+    "dpi": t("dpi — кнопка переключения DPI", "dpi — DPI switch button"),
 }
 
 
@@ -50,9 +51,9 @@ def _describe_binding(action: object) -> str:
     """Человекочитаемое описание действия кнопки для списка в диалоге."""
     if isinstance(action, dict):
         if "macro" in action:
-            return f"макрос {action['macro']}"
+            return t(f"макрос {action['macro']}", f"macro {action['macro']}")
         if "key" in action:
-            return f"клавиши {action['key']}"
+            return t(f"клавиши {action['key']}", f"keys {action['key']}")
         return str(action)
     return str(action)
 
@@ -113,7 +114,7 @@ def _parse_buttons_text(text: str) -> dict[str, object]:
         name = name.strip()
         action = action.strip()
         if not name or not action:
-            raise ValueError(f"назначение кнопки должно быть BUTTON=ACTION: {chunk!r}")
+            raise ValueError(t(f"назначение кнопки должно быть BUTTON=ACTION: {chunk!r}", f"a button binding must be BUTTON=ACTION: {chunk!r}"))
         if action.startswith("macro:"):
             buttons[name] = {"macro": action[len("macro:") :].strip()}
         elif action.startswith("key:"):
@@ -148,14 +149,14 @@ class MainWindow(Adw.ApplicationWindow):
         toolbar = Adw.ToolbarView()
         header = Adw.HeaderBar()
         header.set_title_widget(
-            Adw.WindowTitle(title="mousecfg", subtitle="профили на хосте, без записи в мышь")
+            Adw.WindowTitle(title="mousecfg", subtitle=t("профили на хосте, без записи в мышь", "profiles on the host, nothing written to the mouse"))
         )
 
-        refresh_button = Gtk.Button(icon_name="view-refresh-symbolic", tooltip_text="Обновить")
+        refresh_button = Gtk.Button(icon_name="view-refresh-symbolic", tooltip_text=t("Обновить", "Refresh"))
         refresh_button.connect("clicked", lambda *_: self._refresh())
         header.pack_start(refresh_button)
 
-        self.status_label = Gtk.Label(label="демон не найден", xalign=0)
+        self.status_label = Gtk.Label(label=t("демон не найден", "daemon not found"), xalign=0)
         self.status_label.add_css_class("dim-label")
         self.status_label.set_margin_top(6)
         self.status_label.set_margin_bottom(6)
@@ -177,68 +178,68 @@ class MainWindow(Adw.ApplicationWindow):
 
     def _build_content(self) -> Gtk.Widget:
         self.devices_group = Adw.PreferencesGroup(
-            title="Мышь",
-            description="Демон применяет профиль при подключении и при смене активного приложения",
+            title=t("Мышь", "Mouse"),
+            description=t("Демон применяет профиль при подключении и при смене активного приложения", "The daemon applies a profile on connect and when the focused application changes"),
         )
-        self.mode_row = Adw.ActionRow(title="Режим устройства", subtitle="—")
+        self.mode_row = Adw.ActionRow(title=t("Режим устройства", "Device mode"), subtitle="—")
         self.mode_badge = Gtk.Label(label="—")
         self.mode_badge.add_css_class("dim-label")
         self.mode_row.add_suffix(self.mode_badge)
         self.devices_group.add(self.mode_row)
 
         self.dpi_row = Adw.SpinRow.new_with_range(100, 8000, 50)
-        self.dpi_row.set_title("DPI (волатильно)")
-        self.dpi_row.set_subtitle("Меняется в оперативной памяти мыши; после отключения сбросится")
+        self.dpi_row.set_title(t("DPI (волатильно)", "DPI (volatile)"))
+        self.dpi_row.set_subtitle(t("Меняется в оперативной памяти мыши; после отключения сбросится", "Changed in the mouse RAM; resets after disconnection"))
         self.dpi_row.connect("notify::value", self._on_dpi_changed)
         self.devices_group.add(self.dpi_row)
 
-        self.rate_row = Adw.ComboRow(title="Частота опроса (волатильно)")
+        self.rate_row = Adw.ComboRow(title=t("Частота опроса (волатильно)", "Report rate (volatile)"))
         self.rate_row.set_model(
-            Gtk.StringList.new([f"{value} мс ({1000 // value} Гц)" for value in RATE_CHOICES])
+            Gtk.StringList.new([t(f"{value} мс ({1000 // value} Гц)", f"{value} ms ({1000 // value} Hz)") for value in RATE_CHOICES])
         )
         self.rate_row.connect("notify::selected", self._on_rate_changed)
         self.devices_group.add(self.rate_row)
 
         self.profiles_group = Adw.PreferencesGroup(
-            title="Профили",
-            description="Профили хранятся в ~/.config/mousecfg/profiles и не зависят от памяти мыши",
+            title=t("Профили", "Profiles"),
+            description=t("Профили хранятся в ~/.config/mousecfg/profiles и не зависят от памяти мыши", "Profiles are stored in ~/.config/mousecfg/profiles and do not depend on mouse memory"),
         )
-        add_profile_button = Gtk.Button(icon_name="list-add-symbolic", tooltip_text="Добавить профиль")
+        add_profile_button = Gtk.Button(icon_name="list-add-symbolic", tooltip_text=t("Добавить профиль", "Add profile"))
         add_profile_button.add_css_class("flat")
         add_profile_button.connect("clicked", lambda *_: self._open_profile_dialog(None))
         self.profiles_group.set_header_suffix(add_profile_button)
 
         self.lighting_group = Adw.PreferencesGroup(
-            title="Подсветка",
-            description="Эффект применяется волатильно; во встроенную память мыши ничего не пишется",
+            title=t("Подсветка", "Lighting"),
+            description=t("Эффект применяется волатильно; во встроенную память мыши ничего не пишется", "The effect is applied volatilely; nothing is written to onboard memory"),
         )
         self.lighting_group.set_visible(False)
 
-        self.lighting_effect_row = Adw.ComboRow(title="Эффект")
+        self.lighting_effect_row = Adw.ComboRow(title=t("Эффект", "Effect"))
         self.lighting_effect_row.set_model(Gtk.StringList.new(list(LIGHTING_EFFECT_CHOICES)))
         self.lighting_effect_row.connect("notify::selected", self._on_lighting_changed)
         self.lighting_group.add(self.lighting_effect_row)
 
         self.lighting_color_row = Gtk.ColorDialogButton(
-            dialog=Gtk.ColorDialog(with_alpha=False), tooltip_text="Цвет подсветки"
+            dialog=Gtk.ColorDialog(with_alpha=False), tooltip_text=t("Цвет подсветки", "Lighting colour")
         )
         self.lighting_color_row.set_rgba(_rgba_from_hex(DEFAULT_LIGHTING_COLOR))
         self.lighting_color_row.connect("notify::rgba", self._on_lighting_changed)
-        color_row = Adw.ActionRow(title="Цвет")
+        color_row = Adw.ActionRow(title=t("Цвет", "Colour"))
         color_row.add_suffix(self.lighting_color_row)
         self.lighting_group.add(color_row)
 
         self.lighting_brightness_row = Adw.SpinRow.new_with_range(0, 100, 5)
-        self.lighting_brightness_row.set_title("Яркость, %")
+        self.lighting_brightness_row.set_title(t("Яркость, %", "Brightness, %"))
         self.lighting_brightness_row.set_value(100)
         self.lighting_brightness_row.connect("notify::value", self._on_lighting_changed)
         self.lighting_group.add(self.lighting_brightness_row)
 
         self.buttons_group = Adw.PreferencesGroup(
-            title="Кнопки",
-            description="Ремап выполняет хост через evdev/uinput: мышь о нём не знает",
+            title=t("Кнопки", "Buttons"),
+            description=t("Ремап выполняет хост через evdev/uinput: мышь о нём не знает", "Remapping is done by the host via evdev/uinput: the mouse knows nothing about it"),
         )
-        self.macros_group = Adw.PreferencesGroup(title="Макросы")
+        self.macros_group = Adw.PreferencesGroup(title=t("Макросы", "Macros"))
 
         page = Adw.PreferencesPage()
         page.add(self.devices_group)
@@ -255,7 +256,7 @@ class MainWindow(Adw.ApplicationWindow):
         footer.set_margin_start(12)
         footer.set_margin_end(12)
         label = Gtk.Label(
-            label="Настройки живут в оперативной памяти мыши и не пишутся во встроенную память.",
+            label=t("Настройки живут в оперативной памяти мыши и не пишутся во встроенную память.", "Settings live in the mouse RAM and are not written to onboard memory."),
             xalign=0,
         )
         label.add_css_class("dim-label")
@@ -271,7 +272,7 @@ class MainWindow(Adw.ApplicationWindow):
         self.client.call_async("status", on_done=self._on_status, on_error=self._on_error)
 
     def _on_error(self, message: str) -> None:
-        self.status_label.set_text(f"демон недоступен: {message}")
+        self.status_label.set_text(t(f"демон недоступен: {message}", f"daemon unavailable: {message}"))
         self._clear_group(self.profiles_group)
         self._clear_group(self.buttons_group)
         self._clear_group(self.macros_group)
@@ -281,12 +282,12 @@ class MainWindow(Adw.ApplicationWindow):
     def _on_status(self, status: object) -> None:
         data = dict(status)  # type: ignore[arg-type]
         self.devices = list(data.get("devices", []))
-        watcher = data.get("focus_watcher") or "нет"
+        watcher = data.get("focus_watcher") or t("нет", "none")
         focused = data.get("focused_app") or "—"
-        self.status_label.set_text(f"активное приложение: {focused}  ·  источник: {watcher}")
+        self.status_label.set_text(t(f"активное приложение: {focused}  ·  источник: {watcher}", f"focused application: {focused}  ·  source: {watcher}"))
 
         if not self.devices:
-            self._on_error("нет устройств под управлением")
+            self._on_error(t("нет устройств под управлением", "no managed devices"))
             return
 
         device = self.devices[0]
@@ -294,12 +295,14 @@ class MainWindow(Adw.ApplicationWindow):
         self.dpi_row.set_sensitive(True)
         self.rate_row.set_sensitive(True)
 
-        mode = device.get("mode") or "неизвестен"
+        mode = device.get("mode") or t("неизвестен", "unknown")
         self.mode_badge.set_text(mode)
         if mode == "onboard":
             self.mode_row.set_subtitle(
-                "On-Board: настройки с хоста могут игнорироваться. Переключите в host командой "
-                "mousecfg mode host --allow-onboard-switch (однократная запись)"
+                t("On-Board: настройки с хоста могут игнорироваться. Переключите в host командой "
+                "mousecfg mode host --allow-onboard-switch (однократная запись)",
+                "On-Board: host settings may be ignored. Switch to host with "
+                "mousecfg mode host --allow-onboard-switch (a one-time write)")
             )
         else:
             self.mode_row.set_subtitle(str(device.get("name") or ""))
@@ -339,24 +342,24 @@ class MainWindow(Adw.ApplicationWindow):
             if detail.get("dpi"):
                 summary.append(f"DPI {detail['dpi']}")
             if detail.get("report_rate_ms"):
-                summary.append(f"{detail['report_rate_ms']} мс")
+                summary.append(t(f"{detail['report_rate_ms']} мс", f"{detail['report_rate_ms']} ms"))
             if detail.get("match_apps"):
-                summary.append("приложения: " + ", ".join(detail["match_apps"]))
+                summary.append(t("приложения: ", "applications: ") + ", ".join(detail["match_apps"]))
             row = Adw.ActionRow(title=str(profile_id), subtitle=" · ".join(summary) or profiles_file)
             if profile_id == active:
                 row.add_prefix(Gtk.Image.new_from_icon_name("object-select-symbolic"))
 
-            apply_button = Gtk.Button(label="Применить")
+            apply_button = Gtk.Button(label=t("Применить", "Apply"))
             apply_button.add_css_class("flat")
             apply_button.connect("clicked", self._on_apply_clicked, str(profile_id))
             row.add_suffix(apply_button)
 
-            edit_button = Gtk.Button(icon_name="document-edit-symbolic", tooltip_text="Изменить")
+            edit_button = Gtk.Button(icon_name="document-edit-symbolic", tooltip_text=t("Изменить", "Edit"))
             edit_button.add_css_class("flat")
             edit_button.connect("clicked", lambda _b, pid=profile_id: self._open_profile_dialog(pid))
             row.add_suffix(edit_button)
 
-            remove_button = Gtk.Button(icon_name="user-trash-symbolic", tooltip_text="Удалить")
+            remove_button = Gtk.Button(icon_name="user-trash-symbolic", tooltip_text=t("Удалить", "Delete"))
             remove_button.add_css_class("flat")
             remove_button.connect("clicked", lambda _b, pid=profile_id: self._on_profile_remove(pid))
             row.add_suffix(remove_button)
@@ -367,15 +370,15 @@ class MainWindow(Adw.ApplicationWindow):
             self._add_row(
                 self.profiles_group,
                 Adw.ActionRow(
-                    title="Профили не загружены",
-                    subtitle=profiles_file or "файл профилей пока не создан",
+                    title=t("Профили не загружены", "Profiles not loaded"),
+                    subtitle=profiles_file or t("файл профилей пока не создан", "the profiles file has not been created yet"),
                 ),
             )
 
         if device.get("last_error"):
             self._add_row(
                 self.profiles_group,
-                Adw.ActionRow(title="Последняя ошибка", subtitle=str(device["last_error"])),
+                Adw.ActionRow(title=t("Последняя ошибка", "Last error"), subtitle=str(device["last_error"])),
             )
 
     def _profile_details(self, device: dict) -> list[dict]:
@@ -392,8 +395,8 @@ class MainWindow(Adw.ApplicationWindow):
             self._add_row(
                 self.buttons_group,
                 Adw.ActionRow(
-                    title="Кнопки не переназначены",
-                    subtitle="Добавьте их в профиль — ремап выполняется на хосте",
+                    title=t("Кнопки не переназначены", "Buttons are not remapped"),
+                    subtitle=t("Добавьте их в профиль — ремап выполняется на хосте", "Add them to a profile — remapping is done on the host"),
                 ),
             )
             return
@@ -405,7 +408,7 @@ class MainWindow(Adw.ApplicationWindow):
     def _render_macros(self) -> None:
         if self._record_macro_button is None:
             self._record_macro_button = Gtk.Button(
-                icon_name="media-record-symbolic", tooltip_text="Записать макрос"
+                icon_name="media-record-symbolic", tooltip_text=t("Записать макрос", "Record macro")
             )
             self._record_macro_button.add_css_class("flat")
             self._record_macro_button.connect("clicked", lambda *_: self._open_macro_recorder())
@@ -420,8 +423,8 @@ class MainWindow(Adw.ApplicationWindow):
             self._add_row(
                 self.macros_group,
                 Adw.ActionRow(
-                    title="Макросов нет",
-                    subtitle="Нажмите «Записать» и нажмите нужные клавиши",
+                    title=t("Макросов нет", "No macros"),
+                    subtitle=t("Нажмите «Записать» и нажмите нужные клавиши", "Press “Record” and press the keys you need"),
                 ),
             )
             return
@@ -430,7 +433,7 @@ class MainWindow(Adw.ApplicationWindow):
             row = Adw.ActionRow(title=title, subtitle=str(macro.get("describe", "")))
             row.add_prefix(Gtk.Image.new_from_icon_name("input-keyboard-symbolic"))
 
-            edit_button = Gtk.Button(icon_name="media-record-symbolic", tooltip_text="Перезаписать")
+            edit_button = Gtk.Button(icon_name="media-record-symbolic", tooltip_text=t("Перезаписать", "Re-record"))
             edit_button.add_css_class("flat")
             edit_button.connect(
                 "clicked",
@@ -438,7 +441,7 @@ class MainWindow(Adw.ApplicationWindow):
             )
             row.add_suffix(edit_button)
 
-            remove_button = Gtk.Button(icon_name="user-trash-symbolic", tooltip_text="Удалить")
+            remove_button = Gtk.Button(icon_name="user-trash-symbolic", tooltip_text=t("Удалить", "Delete"))
             remove_button.add_css_class("flat")
             remove_button.connect("clicked", lambda _b, mid=str(macro["id"]): self._remove_macro(mid))
             row.add_suffix(remove_button)
@@ -448,7 +451,7 @@ class MainWindow(Adw.ApplicationWindow):
     # -- запись макроса ---------------------------------------------------
     def _open_macro_recorder(self, macro_id: str = "", name: str = "") -> None:
         if not self.device_key:
-            self._toast("Устройство не выбрано")
+            self._toast(t("Устройство не выбрано", "No device selected"))
             return
         dialog = MacroRecordingDialog(
             self,
@@ -472,11 +475,11 @@ class MainWindow(Adw.ApplicationWindow):
         вспоминать id макроса.
         """
         if not self.device_key:
-            self._toast("Устройство не выбрано")
+            self._toast(t("Устройство не выбрано", "No device selected"))
             return
         profile_id = profile_id.strip()
         if not profile_id:
-            self._toast("Сначала укажите id профиля")
+            self._toast(t("Сначала укажите id профиля", "Specify a profile id first"))
             return
         macro_id = _macro_id_for(profile_id, button)
         dialog = MacroRecordingDialog(
@@ -523,9 +526,9 @@ class MainWindow(Adw.ApplicationWindow):
             current = _parse_buttons_text(buttons_row.get_text())
             current[button] = {"macro": macro_id}
             buttons_row.set_text(_buttons_to_text(current))
-            self._toast(f"Макрос {macro_id} записан и назначен на кнопку {button}")
+            self._toast(t(f"Макрос {macro_id} записан и назначен на кнопку {button}", f"Macro {macro_id} recorded and bound to button {button}"))
         else:
-            self._toast(f"Макрос {macro_id} сохранён")
+            self._toast(t(f"Макрос {macro_id} сохранён", f"Macro {macro_id} saved"))
         self._refresh()
 
     def _remove_macro(self, macro_id: str) -> None:
@@ -538,7 +541,7 @@ class MainWindow(Adw.ApplicationWindow):
         )
 
     def _macro_removed(self, macro_id: str) -> None:
-        self._toast(f"Макрос {macro_id} удалён")
+        self._toast(t(f"Макрос {macro_id} удалён", f"Macro {macro_id} deleted"))
         self._refresh()
 
     # -- вспомогательное -------------------------------------------------
@@ -554,7 +557,7 @@ class MainWindow(Adw.ApplicationWindow):
     def _on_apply_clicked(self, _button: Gtk.Button, profile_id: str) -> None:
         self.client.call_async(
             "apply-profile",
-            on_done=lambda _result: self._toast(f"Применено: {profile_id}"),
+            on_done=lambda _result: self._toast(t(f"Применено: {profile_id}", f"Applied: {profile_id}")),
             on_error=self._on_error,
             device=self.device_key,
             profile=profile_id,
@@ -571,7 +574,7 @@ class MainWindow(Adw.ApplicationWindow):
         value = int(row.get_value())
         self.client.call_async(
             "set-dpi",
-            on_done=lambda _result: self._toast(f"DPI {value} (волатильно)"),
+            on_done=lambda _result: self._toast(t(f"DPI {value} (волатильно)", f"DPI {value} (volatile)")),
             on_error=self._on_error,
             device=self.device_key,
             value=value,
@@ -586,7 +589,7 @@ class MainWindow(Adw.ApplicationWindow):
         milliseconds = RATE_CHOICES[index]
         self.client.call_async(
             "set-rate",
-            on_done=lambda _result: self._toast(f"Частота опроса {milliseconds} мс"),
+            on_done=lambda _result: self._toast(t(f"Частота опроса {milliseconds} мс", f"Report rate {milliseconds} ms")),
             on_error=self._on_error,
             device=self.device_key,
             value=milliseconds,
@@ -609,7 +612,7 @@ class MainWindow(Adw.ApplicationWindow):
         params["brightness"] = int(self.lighting_brightness_row.get_value())
         self.client.call_async(
             "set-lighting",
-            on_done=lambda _result: self._toast(f"Подсветка: {effect} (волатильно)"),
+            on_done=lambda _result: self._toast(t(f"Подсветка: {effect} (волатильно)", f"Lighting: {effect} (volatile)")),
             on_error=self._on_error,
             **params,
         )
@@ -617,31 +620,31 @@ class MainWindow(Adw.ApplicationWindow):
     # -- редактирование профилей ----------------------------------------
     def _open_profile_dialog(self, profile_id: str | None) -> None:
         if not self.device_key:
-            self._toast("Устройство не выбрано")
+            self._toast(t("Устройство не выбрано", "No device selected"))
             return
         existing = self._profiles.get(profile_id or "", {})
         dialog = Adw.Window(
             transient_for=self,
             modal=True,
-            title="Профиль" if profile_id else "Новый профиль",
+            title=t("Профиль", "Profile") if profile_id else t("Новый профиль", "New profile"),
             default_width=420,
             default_height=520,
         )
 
         toolbar = Adw.ToolbarView()
         header = Adw.HeaderBar()
-        header.set_title_widget(Adw.WindowTitle(title=existing.get("name") or (profile_id or "Новый профиль")))
+        header.set_title_widget(Adw.WindowTitle(title=existing.get("name") or (profile_id or t("Новый профиль", "New profile"))))
         toolbar.add_top_bar(header)
 
         page = Adw.PreferencesPage()
-        group = Adw.PreferencesGroup(title="Основное")
+        group = Adw.PreferencesGroup(title=t("Основное", "General"))
 
-        id_row = Adw.EntryRow(title="id (латиницей, без пробелов)")
+        id_row = Adw.EntryRow(title=t("id (латиницей, без пробелов)", "id (latin letters, no spaces)"))
         id_row.set_text(profile_id or "")
         id_row.set_editable(not profile_id)
         group.add(id_row)
 
-        name_row = Adw.EntryRow(title="Название")
+        name_row = Adw.EntryRow(title=t("Название", "Name"))
         name_row.set_text(str(existing.get("name") or ""))
         group.add(name_row)
 
@@ -650,39 +653,41 @@ class MainWindow(Adw.ApplicationWindow):
         dpi_row.set_value(float(existing.get("dpi") or self.dpi_row.get_value() or 1600))
         group.add(dpi_row)
 
-        rate_row = Adw.ComboRow(title="Частота опроса")
-        rate_row.set_model(Gtk.StringList.new([f"{value} мс ({1000 // value} Гц)" for value in RATE_CHOICES]))
+        rate_row = Adw.ComboRow(title=t("Частота опроса", "Report rate"))
+        rate_row.set_model(Gtk.StringList.new([t(f"{value} мс ({1000 // value} Гц)", f"{value} ms ({1000 // value} Hz)") for value in RATE_CHOICES]))
         current_rate = int(existing.get("report_rate_ms") or 0)
         rate_row.set_selected(RATE_CHOICES.index(current_rate) if current_rate in RATE_CHOICES else 0)
         group.add(rate_row)
 
-        apps_row = Adw.EntryRow(title="match_apps (через запятую)")
+        apps_row = Adw.EntryRow(title=t("match_apps (через запятую)", "match_apps (comma-separated)"))
         apps_row.set_text(", ".join(existing.get("match_apps") or []))
         group.add(apps_row)
 
         buttons_group = Adw.PreferencesGroup(
-            title="Кнопки",
+            title=t("Кнопки", "Buttons"),
             description="side1=copy, middle=macro:burst, right=ignore",
         )
-        buttons_row = Adw.EntryRow(title="Назначения (через запятую)")
+        buttons_row = Adw.EntryRow(title=t("Назначения (через запятую)", "Bindings (comma-separated)"))
         buttons_row.set_text(_buttons_to_text(existing.get("buttons")))
         buttons_group.add(buttons_row)
 
         # Кнопка -> макрос: выбираем кнопку мыши, затем пишем макрос нажатиями.
         record_group = Adw.PreferencesGroup(
-            title="Кнопка и макрос",
+            title=t("Кнопка и макрос", "Button and macro"),
             description=(
-                "Выберите кнопку мыши, нажмите «Записать макрос» и нажмите нужные клавиши. "
-                "Макрос исполнит хост; в мышь ничего не пишется."
+                t("Выберите кнопку мыши, нажмите «Записать макрос» и нажмите нужные клавиши. "
+                "Макрос исполнит хост; в мышь ничего не пишется.",
+                "Choose a mouse button, press “Record macro” and press the keys you need. "
+                "The host runs the macro; nothing is written to the mouse.")
             ),
         )
-        button_choice = Adw.ComboRow(title="Кнопка мыши")
+        button_choice = Adw.ComboRow(title=t("Кнопка мыши", "Mouse button"))
         button_choice.set_model(Gtk.StringList.new([MOUSE_BUTTON_LABELS[name] for name in MOUSE_BUTTON_CHOICES]))
         # По умолчанию подставляем боковую кнопку — её чаще всего и назначают.
         button_choice.set_selected(MOUSE_BUTTON_CHOICES.index("side1"))
         record_group.add(button_choice)
 
-        record_macro_button = Gtk.Button(label="Записать макрос")
+        record_macro_button = Gtk.Button(label=t("Записать макрос", "Record macro"))
         record_macro_button.add_css_class("suggested-action")
         record_macro_button.connect(
             "clicked",
@@ -692,21 +697,21 @@ class MainWindow(Adw.ApplicationWindow):
                 buttons_row,
             ),
         )
-        bindings_row = Adw.ActionRow(title="Текущие назначения")
-        bindings_row.set_subtitle(_buttons_to_text(existing.get("buttons")) or "пока пусто")
+        bindings_row = Adw.ActionRow(title=t("Текущие назначения", "Current bindings"))
+        bindings_row.set_subtitle(_buttons_to_text(existing.get("buttons")) or t("пока пусто", "empty for now"))
         bindings_row.add_suffix(record_macro_button)
         record_group.add(bindings_row)
         buttons_row.connect(
             "changed",
-            lambda row: bindings_row.set_subtitle(row.get_text() or "пока пусто"),
+            lambda row: bindings_row.set_subtitle(row.get_text() or t("пока пусто", "empty for now")),
         )
 
         lighting_group = Adw.PreferencesGroup(
-            title="Подсветка профиля",
-            description="Применяется вместе с профилем; ничего не пишется в память мыши",
+            title=t("Подсветка профиля", "Profile lighting"),
+            description=t("Применяется вместе с профилем; ничего не пишется в память мыши", "Applied together with the profile; nothing is written to mouse memory"),
         )
         lighting = existing.get("lighting") or {}
-        lighting_effect = Adw.ComboRow(title="Эффект")
+        lighting_effect = Adw.ComboRow(title=t("Эффект", "Effect"))
         lighting_effect.set_model(Gtk.StringList.new(list(LIGHTING_EFFECT_CHOICES)))
         current_effect = str(lighting.get("effect") or "disabled")
         lighting_effect.set_selected(
@@ -717,19 +722,19 @@ class MainWindow(Adw.ApplicationWindow):
         lighting_group.add(lighting_effect)
 
         lighting_color = Gtk.ColorDialogButton(
-            dialog=Gtk.ColorDialog(with_alpha=False), tooltip_text="Цвет подсветки"
+            dialog=Gtk.ColorDialog(with_alpha=False), tooltip_text=t("Цвет подсветки", "Lighting colour")
         )
         color_value = lighting.get("color")
         if isinstance(color_value, int):
             lighting_color.set_rgba(_rgba_from_hex(f"#{color_value:06x}"))
         else:
             lighting_color.set_rgba(_rgba_from_hex(DEFAULT_LIGHTING_COLOR))
-        color_row = Adw.ActionRow(title="Цвет")
+        color_row = Adw.ActionRow(title=t("Цвет", "Colour"))
         color_row.add_suffix(lighting_color)
         lighting_group.add(color_row)
 
         lighting_brightness = Adw.SpinRow.new_with_range(0, 100, 5)
-        lighting_brightness.set_title("Яркость, %")
+        lighting_brightness.set_title(t("Яркость, %", "Brightness, %"))
         lighting_brightness.set_value(float(lighting.get("brightness") or 100))
         lighting_group.add(lighting_brightness)
 
@@ -745,9 +750,9 @@ class MainWindow(Adw.ApplicationWindow):
         footer.set_margin_bottom(6)
         footer.set_margin_start(12)
         footer.set_margin_end(12)
-        cancel = Gtk.Button(label="Отмена")
+        cancel = Gtk.Button(label=t("Отмена", "Cancel"))
         cancel.connect("clicked", lambda *_: dialog.close())
-        save = Gtk.Button(label="Сохранить")
+        save = Gtk.Button(label=t("Сохранить", "Save"))
         save.add_css_class("suggested-action")
         save.connect(
             "clicked",
@@ -801,7 +806,7 @@ class MainWindow(Adw.ApplicationWindow):
     ) -> None:
         profile_id = profile_id.strip()
         if not profile_id:
-            self._toast("Нужен id профиля")
+            self._toast(t("Нужен id профиля", "A profile id is required"))
             return
         try:
             buttons = _parse_buttons_text(buttons_text)
@@ -827,7 +832,8 @@ class MainWindow(Adw.ApplicationWindow):
     def _profile_saved(self, dialog: Adw.Window, result: object, profile_id: str) -> None:
         dialog.close()
         replaced = bool(dict(result).get("replaced")) if isinstance(result, dict) else False
-        self._toast(f"Профиль {profile_id} {'изменён' if replaced else 'добавлен'}")
+        self._toast(t(f"Профиль {profile_id} {'изменён' if replaced else 'добавлен'}",
+                          f"Profile {profile_id} {'updated' if replaced else 'added'}"))
         self._refresh()
 
     def _on_profile_remove(self, profile_id: str) -> None:
@@ -840,7 +846,7 @@ class MainWindow(Adw.ApplicationWindow):
         )
 
     def _profile_removed(self, profile_id: str) -> None:
-        self._toast(f"Профиль {profile_id} удалён")
+        self._toast(t(f"Профиль {profile_id} удалён", f"Profile {profile_id} deleted"))
         self._refresh()
 
     def _toast(self, message: str) -> None:

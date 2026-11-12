@@ -16,6 +16,7 @@ from pathlib import Path
 
 from . import appwatch, config, consent, engine, ipc, profiles, registry, session
 from .hidpp.protocol import ProtocolError, TransportError
+from .i18n import t
 from .input.actions import ActionError, parse_action
 from .input.detect import InputDeviceInfo, find_pointer_devices
 from .input.macros import parse_macros
@@ -51,6 +52,9 @@ class DeviceRuntime:
     # (ACL или сам узел появляются чуть позже запуска демона).
     remap_retry_at: float = 0.0
     last_error: str = ""
+    # Последняя ошибка связана с поиском event-узла (а не с профилями):
+    # когда узел наконец находится, её можно просто очистить.
+    input_error: bool = False
 
     @property
     def profile_ids(self) -> list[str]:
@@ -100,7 +104,7 @@ class Daemon:
         rpc_thread = threading.Thread(target=self.server.serve_forever, daemon=True)
         rpc_thread.start()
 
-        logger.info("демон запущен: профили из %s", self.options.profiles_dir)
+        logger.info(t("демон запущен: профили из %s", "daemon started: profiles from %s"), self.options.profiles_dir)
         try:
             while not self._stop.is_set():
                 self._tick()
@@ -123,14 +127,14 @@ class Daemon:
         try:
             nodes = session.discovery.logitech_hidpp_nodes()
         except Exception as exc:  # noqa: BLE001
-            logger.warning("обнаружение устройств упало: %s", exc)
+            logger.warning(t("обнаружение устройств упало: %s", "device discovery failed: %s"), exc)
             return
 
         present = {registry.device_key(serial=node.serial, usb_id=node.usb_id, usb_address=node.usb_address) for node in nodes}
         with self._lock:
             for key in list(self.devices):
                 if key not in present:
-                    logger.info("устройство %s отключено", key)
+                    logger.info(t("устройство %s отключено", "device %s disconnected"), key)
                     self.devices.pop(key).stop()
 
         for node in nodes:
@@ -187,11 +191,14 @@ class Daemon:
             device.set_host_mode()
             new_mode = device.get_mode()
         except (TransportError, ProtocolError, TimeoutError, OSError) as exc:
-            logger.warning("%s: не удалось перейти в Host mode: %s", name, exc)
+            logger.warning(t("%s: не удалось перейти в Host mode: %s", "%s: failed to switch to Host mode: %s"), name, exc)
             return "onboard"
         if new_mode == "host":
             logger.info(
-                "%s: автоматический переход On-Board → Host по ранее данному согласию",
+                t(
+                    "%s: автоматический переход On-Board → Host по ранее данному согласию",
+                    "%s: automatic On-Board → Host switch based on previously given consent",
+                ),
                 name,
             )
         return new_mode
@@ -204,14 +211,14 @@ class Daemon:
                 dry_run=self.options.dry_run,
             )
         except Exception as exc:  # noqa: BLE001
-            logger.warning("не удалось открыть %s: %s", node.path, exc)
+            logger.warning(t("не удалось открыть %s: %s", "failed to open %s: %s"), node.path, exc)
             return
 
         try:
             info = opened.device.info()
             mode = opened.device.get_mode() if opened.device.has_feature(0x8100) else ""
         except Exception as exc:  # noqa: BLE001
-            logger.warning("не удалось прочитать %s: %s", node.path, exc)
+            logger.warning(t("не удалось прочитать %s: %s", "failed to read %s: %s"), node.path, exc)
             opened.close()
             return
 
@@ -229,11 +236,11 @@ class Daemon:
             dpi = opened.device.get_dpi()
             rate_ms = opened.device.get_rate_ms()
         except Exception as exc:  # noqa: BLE001
-            logger.debug("DPI/rate недоступны у %s: %s", node.path, exc)
+            logger.debug(t("DPI/rate недоступны у %s: %s", "DPI/rate are unavailable on %s: %s"), node.path, exc)
         try:
             lighting_supported = opened.device.has_feature(0x8071)
         except Exception as exc:  # noqa: BLE001
-            logger.debug("подсветка недоступна у %s: %s", node.path, exc)
+            logger.debug(t("подсветка недоступна у %s: %s", "lighting is unavailable on %s: %s"), node.path, exc)
         finally:
             opened.close()
 
@@ -253,11 +260,13 @@ class Daemon:
         self._load_profile_set(runtime)
         self.devices[key] = runtime
 
-        logger.info("подключено: %s (%s)", state.name, state.mode or "режим неизвестен")
+        logger.info(t("подключено: %s (%s)", "connected: %s (%s)"), state.name, state.mode or t("режим неизвестен", "mode unknown"))
         if mode == "onboard":
             logger.warning(
-                "%s в режиме On-Board: настройки с хоста могут игнорироваться. "
+                t("%s в режиме On-Board: настройки с хоста могут игнорироваться. "
                 "Переход: mousecfg mode host --allow-onboard-switch",
+                "%s is in On-Board mode: host settings may be ignored. "
+                "Switch with: mousecfg mode host --allow-onboard-switch"),
                 state.name,
             )
 
@@ -276,7 +285,7 @@ class Daemon:
         try:
             runtime.profile_set = profiles.load_profile_file(path)
         except (profiles.ProfileError, ValueError, OSError) as exc:
-            runtime.last_error = f"профили: {exc}"
+            runtime.last_error = t(f"профили: {exc}", f"profiles: {exc}")
             logger.warning("%s: %s", path, exc)
             return
         # Ручной выбор мог указывать на профиль, который удалили из файла:
@@ -295,7 +304,7 @@ class Daemon:
             pinned_id=runtime.state.pinned_profile,
         )
         if chosen is None:
-            logger.debug("%s: нет подходящего профиля", runtime.state.name)
+            logger.debug(t("%s: нет подходящего профиля", "%s: no matching profile"), runtime.state.name)
             return
         if (
             runtime.active_profile is not None
@@ -313,7 +322,7 @@ class Daemon:
                 result = engine.apply_profile(opened.device, chosen)
         except (TransportError, ProtocolError, TimeoutError, OSError) as exc:
             runtime.last_error = str(exc)
-            logger.warning("%s: не удалось применить профиль %s: %s", runtime.state.name, chosen.id, exc)
+            logger.warning(t("%s: не удалось применить профиль %s: %s", "%s: failed to apply profile %s: %s"), runtime.state.name, chosen.id, exc)
             return
 
         runtime.active_profile = chosen
@@ -349,6 +358,7 @@ class Daemon:
             else:
                 logger.debug("%s: %s", runtime.state.name, message)
             runtime.last_error = message
+            runtime.input_error = True
             runtime.remap_retry_at = time.monotonic() + REMAP_RETRY_SECONDS
             return
 
@@ -356,8 +366,9 @@ class Daemon:
         runtime.state.input_path = info.path
         runtime.remap_retry_at = 0.0
         # Узел нашёлся — прошлая ошибка про права больше не актуальна.
-        if runtime.last_error and "event-узел" in runtime.last_error:
+        if runtime.input_error:
             runtime.last_error = ""
+            runtime.input_error = False
         registry.save_state(self.state)
 
         chosen = runtime.active_profile or profiles.choose(
@@ -395,15 +406,15 @@ class Daemon:
         try:
             import evdev
         except ImportError as exc:  # pragma: no cover — зависит от системы
-            runtime.last_error = "модуль evdev не установлен: pip install evdev"
+            runtime.last_error = t("модуль evdev не установлен: pip install evdev", "the evdev module is not installed: pip install evdev")
             logger.warning("%s: %s", runtime.state.name, exc)
             return
 
         try:
             device = evdev.InputDevice(info.path)
         except OSError as exc:
-            runtime.last_error = f"не удалось открыть {info.path}: {exc}"
-            logger.warning("не удалось открыть %s: %s", info.path, exc)
+            runtime.last_error = t(f"не удалось открыть {info.path}: {exc}", f"failed to open {info.path}: {exc}")
+            logger.warning(t("не удалось открыть %s: %s", "failed to open %s: %s"), info.path, exc)
             return
 
         from .input.actions import button_code
@@ -418,13 +429,13 @@ class Daemon:
             try:
                 remapper.run()
             except Exception as exc:  # noqa: BLE001
-                logger.warning("перехват остановлен: %s", exc)
+                logger.warning(t("перехват остановлен: %s", "interception stopped: %s"), exc)
                 runtime.last_error = str(exc)
 
         thread = threading.Thread(target=run, daemon=True, name=f"remap-{runtime.key}")
         thread.start()
         runtime.remapper_thread = thread
-        logger.info("%s: кнопки профиля %s активны (%s)", runtime.state.name, chosen.id, info.path)
+        logger.info(t("%s: кнопки профиля %s активны (%s)", "%s: buttons of profile %s are active (%s)"), runtime.state.name, chosen.id, info.path)
 
     def _find_input(self, runtime: DeviceRuntime) -> InputDeviceInfo:
         candidates = find_pointer_devices(serial=runtime.state.serial)
@@ -432,8 +443,10 @@ class Daemon:
             candidates = find_pointer_devices(name_hint=_name_hint(runtime.state.name))
         if not candidates:
             raise LookupError(
-                "не найден event-узел мыши для ремапа кнопок. "
-                "Проверьте права на /dev/input/event* (нужно правило udev или группа input)"
+                t("не найден event-узел мыши для ремапа кнопок. "
+                "Проверьте права на /dev/input/event* (нужно правило udev или группа input)",
+                "mouse event device for button remapping was not found. "
+                "Check permissions on /dev/input/event* (a udev rule or the input group is required)")
             )
         return candidates[0]
 
@@ -443,20 +456,20 @@ class Daemon:
         try:
             focused = self.watcher.focused()
         except Exception as exc:  # noqa: BLE001
-            logger.debug("опрос фокуса упал: %s", exc)
+            logger.debug(t("опрос фокуса упал: %s", "focus polling failed: %s"), exc)
             return
         app = focused.app_id if focused else ""
         if app == self.focused_app:
             return
         self.focused_app = app
-        logger.debug("активное приложение: %s", app or "<нет>")
+        logger.debug(t("активное приложение: %s", "focused application: %s"), app or t("<нет>", "<none>"))
         for runtime in list(self.devices.values()):
             if runtime.profile_set is None:
                 continue
             try:
                 self._apply(runtime, reason="смена приложения")
             except Exception as exc:  # noqa: BLE001
-                logger.warning("смена профиля по приложению упала: %s", exc)
+                logger.warning(t("смена профиля по приложению упала: %s", "per-application profile switch failed: %s"), exc)
 
     # -- RPC ------------------------------------------------------------
     def _handle_rpc(self, method: str, params: dict) -> object:
@@ -510,7 +523,7 @@ class Daemon:
             return self._rpc_profile_remove(params)
         if method == "profile-export":
             return self._rpc_profile_export(params)
-        raise ipc.IpcError(f"неизвестный метод {method!r}")
+        raise ipc.IpcError(t(f"неизвестный метод {method!r}", f"unknown method {method!r}"))
 
     def _describe(self, runtime: DeviceRuntime) -> dict:
         data = ipc.serialize(asdict(runtime.state))
@@ -557,13 +570,13 @@ class Daemon:
         with self._lock:
             runtime = self.devices.get(key)
         if runtime is None:
-            raise ipc.IpcError(f"устройство {key!r} не подключено")
+            raise ipc.IpcError(t(f"устройство {key!r} не подключено", f"device {key!r} is not connected"))
         if runtime.profile_set is None:
-            raise ipc.IpcError(f"у {runtime.state.name}: нет файла профилей {runtime.state.profiles_file}")
+            raise ipc.IpcError(t(f"у {runtime.state.name}: нет файла профилей {runtime.state.profiles_file}", f"{runtime.state.name}: no profiles file {runtime.state.profiles_file}"))
 
         chosen = next((item for item in runtime.profile_set.profiles if item.id == profile_id), None)
         if chosen is None:
-            raise ipc.IpcError(f"профиль {profile_id!r} не найден в {runtime.state.profiles_file}")
+            raise ipc.IpcError(t(f"профиль {profile_id!r} не найден в {runtime.state.profiles_file}", f"profile {profile_id!r} not found in {runtime.state.profiles_file}"))
 
         with session.open_device(
             runtime.state.path,
@@ -590,7 +603,7 @@ class Daemon:
         with self._lock:
             runtime = self.devices.get(key)
         if runtime is None:
-            raise ipc.IpcError(f"устройство {key!r} не подключено")
+            raise ipc.IpcError(t(f"устройство {key!r} не подключено", f"device {key!r} is not connected"))
 
         with session.open_device(
             runtime.state.path,
@@ -634,7 +647,7 @@ class Daemon:
         effects_by_name = {name: effect_id for effect_id, (name, _) in LIGHTING_EFFECTS.items()}
         effect_id = effects_by_name.get(effect)
         if effect_id is None:
-            raise ipc.IpcError(f"эффект подсветки {effect!r} неизвестен")
+            raise ipc.IpcError(t(f"эффект подсветки {effect!r} неизвестен", f"unknown lighting effect {effect!r}"))
 
         schema = LIGHTING_EFFECTS[effect_id][1]
         device_params: dict[str, int] = {}
@@ -669,10 +682,10 @@ class Daemon:
         runtime = self._runtime_or_error(str(params.get("device", "")))
         profile_id = str(params.get("profile", ""))
         if runtime.profile_set is None:
-            raise ipc.IpcError(f"у {runtime.state.name}: нет файла профилей {runtime.state.profiles_file}")
+            raise ipc.IpcError(t(f"у {runtime.state.name}: нет файла профилей {runtime.state.profiles_file}", f"{runtime.state.name}: no profiles file {runtime.state.profiles_file}"))
         chosen = next((item for item in runtime.profile_set.profiles if item.id == profile_id), None)
         if chosen is None:
-            raise ipc.IpcError(f"профиль {profile_id!r} не найден")
+            raise ipc.IpcError(t(f"профиль {profile_id!r} не найден", f"profile {profile_id!r} not found"))
 
         with session.open_device(
             runtime.state.path,
@@ -698,7 +711,7 @@ class Daemon:
         runtime = self._runtime_or_error(str(params.get("device", "")))
         profile_ids = runtime.profile_ids
         if not profile_ids:
-            raise ipc.IpcError(f"у {runtime.state.name}: нет профилей")
+            raise ipc.IpcError(t(f"у {runtime.state.name}: нет профилей", f"{runtime.state.name}: no profiles"))
         current = runtime.state.active_profile or profile_ids[0]
         index = (
             (profile_ids.index(current) + step) % len(profile_ids) if current in profile_ids else 0
@@ -731,7 +744,7 @@ class Daemon:
         """
         runtime = self._runtime_or_error(str(params.get("device", "")))
         if runtime.profile_set is None:
-            raise ipc.IpcError(f"у {runtime.state.name}: нет файла профилей {runtime.state.profiles_file}")
+            raise ipc.IpcError(t(f"у {runtime.state.name}: нет файла профилей {runtime.state.profiles_file}", f"{runtime.state.name}: no profiles file {runtime.state.profiles_file}"))
         raw = {
             "id": str(params["id"]),
             "name": str(params.get("name", "")),
@@ -739,7 +752,7 @@ class Daemon:
             "steps": list(params.get("steps") or []),
         }
         if not raw["steps"]:
-            raise ipc.IpcError("макрос без шагов не сохраняется")
+            raise ipc.IpcError(t("макрос без шагов не сохраняется", "a macro without steps is not saved"))
         try:
             parse_macros([raw])  # проверяем до записи
         except (ActionError, ValueError) as exc:
@@ -756,7 +769,7 @@ class Daemon:
     def _rpc_macro_remove(self, params: dict) -> dict:
         runtime = self._runtime_or_error(str(params.get("device", "")))
         if runtime.profile_set is None:
-            raise ipc.IpcError(f"у {runtime.state.name}: нет файла профилей {runtime.state.profiles_file}")
+            raise ipc.IpcError(t(f"у {runtime.state.name}: нет файла профилей {runtime.state.profiles_file}", f"{runtime.state.name}: no profiles file {runtime.state.profiles_file}"))
         path = Path(runtime.state.profiles_file)
         try:
             profiles.remove_macro(path, str(params["id"]))
@@ -770,7 +783,7 @@ class Daemon:
         with self._lock:
             runtime = self.devices.get(key)
         if runtime is None:
-            raise ipc.IpcError(f"устройство {key!r} не подключено")
+            raise ipc.IpcError(t(f"устройство {key!r} не подключено", f"device {key!r} is not connected"))
         return runtime
 
     def _rpc_profile_upsert(self, params: dict) -> dict:
@@ -781,7 +794,7 @@ class Daemon:
         """
         runtime = self._runtime_or_error(str(params.get("device", "")))
         if runtime.profile_set is None:
-            raise ipc.IpcError(f"у {runtime.state.name}: нет файла профилей {runtime.state.profiles_file}")
+            raise ipc.IpcError(t(f"у {runtime.state.name}: нет файла профилей {runtime.state.profiles_file}", f"{runtime.state.name}: no profiles file {runtime.state.profiles_file}"))
 
         profile = profiles.Profile(
             id=str(params["id"]),
@@ -809,7 +822,7 @@ class Daemon:
     def _rpc_profile_remove(self, params: dict) -> dict:
         runtime = self._runtime_or_error(str(params.get("device", "")))
         if runtime.profile_set is None:
-            raise ipc.IpcError(f"у {runtime.state.name}: нет файла профилей {runtime.state.profiles_file}")
+            raise ipc.IpcError(t(f"у {runtime.state.name}: нет файла профилей {runtime.state.profiles_file}", f"{runtime.state.name}: no profiles file {runtime.state.profiles_file}"))
         path = Path(runtime.state.profiles_file)
         try:
             profiles.remove_profile(path, str(params["id"]))
@@ -824,7 +837,7 @@ class Daemon:
         runtime = self._runtime_or_error(str(params.get("device", "")))
         path = Path(runtime.state.profiles_file)
         if not path.exists():
-            raise ipc.IpcError(f"файл профилей не найден: {path}")
+            raise ipc.IpcError(t(f"файл профилей не найден: {path}", f"profiles file not found: {path}"))
         return {"path": str(path), "text": path.read_text(encoding="utf-8")}
 
 

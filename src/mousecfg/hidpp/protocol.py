@@ -11,6 +11,8 @@ import struct
 from dataclasses import dataclass
 from enum import IntEnum
 
+from mousecfg.i18n import t
+
 SHORT_REPORT_ID = 0x10
 LONG_REPORT_ID = 0x11
 SHORT_FRAME_SIZE = 7
@@ -79,7 +81,7 @@ class ProtocolError(Exception):
 
 class FeatureUnsupportedError(ProtocolError):
     def __init__(self, feature: int) -> None:
-        super().__init__(f"feature {feature:#06x} отсутствует у устройства")
+        super().__init__(t(f"feature {feature:#06x} отсутствует у устройства", f"feature {feature:#06x} is not present on the device"))
         self.feature = feature
 
 
@@ -89,8 +91,10 @@ class DeviceError(ProtocolError):
         self.feature = feature
         self.function = function
         super().__init__(
-            f"HID++ ошибка {code:#04x} ({HIDPP_ERRORS.get(code, 'unknown')}) "
-            f"для feature {feature:#06x} функция {function >> 4}"
+            t(f"HID++ ошибка {code:#04x} ({HIDPP_ERRORS.get(code, 'unknown')}) "
+              f"для feature {feature:#06x} функция {function >> 4}",
+              f"HID++ error {code:#04x} ({HIDPP_ERRORS.get(code, 'unknown')}) "
+              f"for feature {feature:#06x} function {function >> 4}")
         )
 
 
@@ -109,21 +113,21 @@ def build_frame(
     (0x00, 0x10, 0x20, 0x30, ...). Младший ниббл займёт Software ID.
     """
     if not 0 <= device_index <= 0xFF:
-        raise ValueError("device_index вне диапазона")
+        raise ValueError(t("device_index вне диапазона", "device_index is out of range"))
     if not 0 <= feature_index <= 0xFF:
-        raise ValueError("feature_index вне диапазона")
+        raise ValueError(t("feature_index вне диапазона", "feature_index is out of range"))
     if function & 0x0F:
-        raise ValueError(f"function должен быть кратен 0x10, получено {function:#04x}")
+        raise ValueError(t(f"function должен быть кратен 0x10, получено {function:#04x}", f"function must be a multiple of 0x10, got {function:#04x}"))
 
     payload = struct.pack("!BB", feature_index, function | (software_id & 0x0F)) + params
 
     long_message = len(payload) > SHORT_FRAME_SIZE - 2 if force_long is None else force_long
     if long_message:
         if len(payload) > LONG_FRAME_SIZE - 2:
-            raise ValueError("слишком длинный параметр для длинного сообщения")
+            raise ValueError(t("слишком длинный параметр для длинного сообщения", "the parameter is too long for a long message"))
         return struct.pack("!BB18s", LONG_REPORT_ID, device_index, payload)
     if len(payload) > SHORT_FRAME_SIZE - 2:
-        raise ValueError("параметры не помещаются в короткое сообщение")
+        raise ValueError(t("параметры не помещаются в короткое сообщение", "the parameters do not fit into a short message"))
     return struct.pack("!BB5s", SHORT_REPORT_ID, device_index, payload)
 
 
@@ -157,16 +161,16 @@ class Reply:
 def parse_frame(frame: bytes) -> Reply:
     """Разобрать кадр, принятый от устройства (с report id первым байтом)."""
     if len(frame) < 4:
-        raise ProtocolError(f"слишком короткий кадр: {frame.hex()}")
+        raise ProtocolError(t(f"слишком короткий кадр: {frame.hex()}", f"frame is too short: {frame.hex()}"))
 
     report_id = frame[0]
     if report_id not in (SHORT_REPORT_ID, LONG_REPORT_ID):
-        raise ProtocolError(f"неизвестный report id {report_id:#04x}: {frame.hex()}")
+        raise ProtocolError(t(f"неизвестный report id {report_id:#04x}: {frame.hex()}", f"unknown report id {report_id:#04x}: {frame.hex()}"))
 
     if report_id == SHORT_REPORT_ID and len(frame) != SHORT_FRAME_SIZE:
-        raise ProtocolError(f"короткий кадр неверной длины {len(frame)}: {frame.hex()}")
+        raise ProtocolError(t(f"короткий кадр неверной длины {len(frame)}: {frame.hex()}", f"short frame has wrong length {len(frame)}: {frame.hex()}"))
     if report_id == LONG_REPORT_ID and len(frame) != LONG_FRAME_SIZE:
-        raise ProtocolError(f"длинный кадр неверной длины {len(frame)}: {frame.hex()}")
+        raise ProtocolError(t(f"длинный кадр неверной длины {len(frame)}: {frame.hex()}", f"long frame has wrong length {len(frame)}: {frame.hex()}"))
 
     return Reply(
         report_id=report_id,

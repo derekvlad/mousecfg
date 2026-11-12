@@ -9,6 +9,7 @@ from . import config, discovery
 from .hidpp.device import HidppDevice
 from .hidpp.safeplane import Journal
 from .hidpp.transport import HidrawTransport
+from .i18n import t
 
 logger = logging.getLogger(__name__)
 
@@ -55,11 +56,12 @@ def open_device(
 
     if not candidates:
         raise DeviceNotFound(
-            "не найдено подходящего HID++ устройства. Проверьте: lsusb, а также доступ к /dev/hidraw*"
+            t("не найдено подходящего HID++ устройства. Проверьте: lsusb, а также доступ к /dev/hidraw*",
+                "no suitable HID++ device found. Check lsusb and access to /dev/hidraw*")
         )
 
     node = candidates[0]
-    logger.debug("открываю %s", node.describe())
+    logger.debug(t("открываю %s", "opening %s"), node.describe())
 
     transport = HidrawTransport(
         node.path, device_index=0xFF if device_index is None else device_index

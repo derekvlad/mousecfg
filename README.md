@@ -1,5 +1,7 @@
 # mousecfg
 
+**Русский** · [English](README.en.md)
+
 [![License: GPL-3.0-or-later](https://img.shields.io/badge/License-GPL--3.0--or--later-blue.svg)](https://www.gnu.org/licenses/gpl-3.0.html)
 [![Python](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/)
 [![Platform](https://img.shields.io/badge/platform-Linux-informational.svg)](#)
@@ -207,6 +209,27 @@ mousecfg profile activate game # выбрать профиль вручную (�
 mousecfg profile next         # переключить на следующий профиль (для хоткея)
 mousecfg daemon -v            # запустить демон на переднем плане
 mousecfg run-profile examples/g102-buttons.toml   # ремап без демона
+```
+
+### Язык интерфейса
+
+CLI, GUI, трей и сообщения демона говорят по-русски и по-английски. Язык
+выбирается по `MOUSECFG_LANG`, затем `LC_ALL`, `LC_MESSAGES`, `LANG`;
+поддерживаются `ru` и `en`, по умолчанию — русский. Можно переопределить для
+одной команды:
+
+```sh
+MOUSECFG_LANG=en mousecfg --help
+MOUSECFG_LANG=en mousecfg-gui
+```
+
+Демон — отдельный процесс: его сообщения (например, описания кнопок в
+`mousecfg status`) берутся из окружения демона. Чтобы переключить и их, задайте
+язык в пользовательском systemd:
+
+```sh
+systemctl --user set-environment MOUSECFG_LANG=en
+systemctl --user restart mousecfg-daemon
 ```
 
 ### Профили и макросы без правки TOML вручную
@@ -427,7 +450,8 @@ PYTHONPATH=src python3 scripts/evdev-selftest.py
 
 - `docs/device-matrix.md` — что проверено на реальном железе;
 - `docs/architecture.md` — слои и почему так;
-- `docs/licensing.md` — лицензии и происхождение кода.
+- `docs/licensing.md` — лицензии и происхождение кода;
+- `docs/en/*.md` — те же документы на английском (и `README.en.md`).
 
 ## Разработка
 

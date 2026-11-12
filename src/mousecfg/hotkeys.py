@@ -21,6 +21,8 @@ from pathlib import Path
 
 from gi.repository import Gio, GLib
 
+from .i18n import t
+
 logger = logging.getLogger(__name__)
 
 PORTAL = "org.freedesktop.portal.Desktop"
@@ -31,8 +33,8 @@ SESSION_IFACE = "org.freedesktop.portal.Session"
 
 # Хоткеи, которые просит проект. id -> описание для диалога портала.
 DEFAULT_SHORTCUTS: dict[str, str] = {
-    "next-profile": "Следующий профиль mousecfg",
-    "prev-profile": "Предыдущий профиль mousecfg",
+    "next-profile": t("Следующий профиль mousecfg", "Next mousecfg profile"),
+    "prev-profile": t("Предыдущий профиль mousecfg", "Previous mousecfg profile"),
 }
 
 # Композиторы, на которых портал GlobalShortcuts не работает (нет бэкенда
@@ -82,7 +84,8 @@ def niri_keybinds(*, bindings: dict[str, tuple[str, str]] | None = None) -> str:
     """
     items = bindings or NIRI_ACTIONS
     lines = [
-        "    // mousecfg: смена профиля мыши (вставьте внутрь блока binds { ... })",
+        t("    // mousecfg: смена профиля мыши (вставьте внутрь блока binds { ... })",
+            "    // mousecfg: mouse profile switching (insert inside the binds { ... } block)",),
     ]
     for hotkey, command in items.values():
         lines.append(f'    {hotkey} {{ spawn-sh "mousecfg {command}"; }}')
@@ -147,8 +150,10 @@ class GlobalShortcuts:
             self._token = str(request).rsplit("/", 1)[-1]
         except GLib.Error as exc:
             raise ShortcutError(
-                "портал GlobalShortcuts недоступен. Запустите mousecfg в scope "
-                f"app-io.github.mousecfg.MouseCfg-<суффикс>.scope. Причина: {exc.message}"
+                t("портал GlobalShortcuts недоступен. Запустите mousecfg в scope "
+                f"app-io.github.mousecfg.MouseCfg-<суффикс>.scope. Причина: {exc.message}",
+                "the GlobalShortcuts portal is unavailable. Run mousecfg in the scope "
+                f"app-io.github.mousecfg.MouseCfg-<suffix>.scope. Reason: {exc.message}")
             ) from exc
         return str(request)
 
@@ -157,13 +162,13 @@ class GlobalShortcuts:
         if str(path).rsplit("/", 1)[-1] != self._token:
             return
         if code != 0:
-            logger.warning("портал отказал в создании сессии хоткеев (код %d)", code)
+            logger.warning(t("портал отказал в создании сессии хоткеев (код %d)", "the portal refused to create a shortcut session (code %d)"), code)
             return
         handle = results.get("session_handle")
         if not handle:
             return
         self.session_handle = str(handle)
-        logger.info("сессия хоткеев создана: %s", self.session_handle)
+        logger.info(t("сессия хоткеев создана: %s", "shortcut session created: %s"), self.session_handle)
         self._bind()
 
     def _bind(self) -> None:
@@ -191,15 +196,15 @@ class GlobalShortcuts:
                 None,
             )
         except GLib.Error as exc:
-            logger.warning("не удалось привязать хоткеи: %s", exc.message)
+            logger.warning(t("не удалось привязать хоткеи: %s", "failed to bind shortcuts: %s"), exc.message)
             return
-        logger.info("хоткеи запрошены у портала: %s", ", ".join(self.shortcuts))
+        logger.info(t("хоткеи запрошены у портала: %s", "shortcuts requested from the portal: %s"), ", ".join(self.shortcuts))
 
     def _on_activated(self, _conn, _sender, _path, _iface, _signal, params) -> None:
         session, shortcut_id, _timestamp, _options = params.unpack()
         if self.session_handle is None or str(session) != self.session_handle:
             return
-        logger.info("хоткей нажат: %s", shortcut_id)
+        logger.info(t("хоткей нажат: %s", "shortcut activated: %s"), shortcut_id)
         if self.on_activated is not None:
             self.on_activated(str(shortcut_id))
 
@@ -220,7 +225,7 @@ class GlobalShortcuts:
                 None,
             )
         except GLib.Error as exc:
-            logger.debug("закрытие сессии хоткеев: %s", exc.message)
+            logger.debug(t("закрытие сессии хоткеев: %s", "closing the shortcut session: %s"), exc.message)
         finally:
             self.session_handle = None
             self._active = False

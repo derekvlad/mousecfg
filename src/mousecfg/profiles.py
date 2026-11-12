@@ -13,6 +13,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from .i18n import t
+
 SCHEMA_VERSION = 1
 
 # Символьные имена кнопок -> распространённые HID++/evdev control id.
@@ -69,24 +71,24 @@ def validate_lighting(lighting: Any, *, profile_id: str = "?") -> None:
     if lighting is None:
         return
     if not isinstance(lighting, dict):
-        raise ProfileError(f"профиль {profile_id!r}: подсветка должна быть таблицей")
+        raise ProfileError(t(f"профиль {profile_id!r}: подсветка должна быть таблицей", f"profile {profile_id!r}: lighting must be a table"))
     effect = str(lighting.get("effect", "static")).lower()
     if effect not in LIGHTING_EFFECTS:
         known = ", ".join(sorted(LIGHTING_EFFECTS))
-        raise ProfileError(f"профиль {profile_id!r}: неизвестный эффект подсветки {effect!r}; известные: {known}")
+        raise ProfileError(t(f"профиль {profile_id!r}: неизвестный эффект подсветки {effect!r}; известные: {known}", f"profile {profile_id!r}: unknown lighting effect {effect!r}; known: {known}"))
     if "brightness" in lighting:
         value = lighting["brightness"]
         if not isinstance(value, int) or not 0 <= value <= 100:
-            raise ProfileError(f"профиль {profile_id!r}: яркость подсветки — целое 0..100")
+            raise ProfileError(t(f"профиль {profile_id!r}: яркость подсветки — целое 0..100", f"profile {profile_id!r}: lighting brightness must be an integer 0..100"))
     if "color" in lighting:
         color = lighting["color"]
         if isinstance(color, str):
             color = _parse_color(color)
         if not isinstance(color, int) or not 0 <= color <= 0xFFFFFF:
-            raise ProfileError(f"профиль {profile_id!r}: цвет подсветки — #rrggbb или целое 0..0xffffff")
+            raise ProfileError(t(f"профиль {profile_id!r}: цвет подсветки — #rrggbb или целое 0..0xffffff", f"profile {profile_id!r}: lighting colour must be #rrggbb or an integer 0..0xffffff"))
     zone = lighting.get("zone", 0)
     if not isinstance(zone, int) or zone < 0:
-        raise ProfileError(f"профиль {profile_id!r}: зона подсветки должна быть неотрицательным целым")
+        raise ProfileError(t(f"профиль {profile_id!r}: зона подсветки должна быть неотрицательным целым", f"profile {profile_id!r}: lighting zone must be a non-negative integer"))
 
 
 def parse_color(value: Any) -> int | None:
@@ -94,11 +96,11 @@ def parse_color(value: Any) -> int | None:
     if value is None:
         return None
     if isinstance(value, bool):
-        raise ProfileError("цвет подсветки: булево значение недопустимо")
+        raise ProfileError(t("цвет подсветки: булево значение недопустимо", "lighting colour: a boolean is not allowed"))
     if isinstance(value, int):
         if 0 <= value <= 0xFFFFFF:
             return value
-        raise ProfileError(f"цвет подсветки {value:#x} вне диапазона 0..0xffffff")
+        raise ProfileError(t(f"цвет подсветки {value:#x} вне диапазона 0..0xffffff", f"lighting colour {value:#x} is out of range 0..0xffffff"))
     if isinstance(value, str):
         text = value.strip().lower()
         if text in COLOR_NAMES:
@@ -109,13 +111,13 @@ def parse_color(value: Any) -> int | None:
             try:
                 return int(text, 16)
             except ValueError as exc:
-                raise ProfileError(f"цвет подсветки {value!r} не разбирается") from exc
+                raise ProfileError(t(f"цвет подсветки {value!r} не разбирается", f"cannot parse lighting colour {value!r}")) from exc
         if len(text) == 3:
             try:
                 return int(text[0] * 2 + text[1] * 2 + text[2] * 2, 16)
             except ValueError as exc:
-                raise ProfileError(f"цвет подсветки {value!r} не разбирается") from exc
-    raise ProfileError(f"цвет подсветки {value!r} не разбирается")
+                raise ProfileError(t(f"цвет подсветки {value!r} не разбирается", f"cannot parse lighting colour {value!r}")) from exc
+    raise ProfileError(t(f"цвет подсветки {value!r} не разбирается", f"cannot parse lighting colour {value!r}"))
 
 
 def _parse_color(value: Any) -> int:
@@ -140,25 +142,25 @@ class ProfileError(ValueError):
 def parse_rate(value: Any) -> int:
     """Принять '1000Hz', '1ms', 1000 или 1 и вернуть миллисекунды."""
     if isinstance(value, bool):
-        raise ProfileError("report_rate: булево значение недопустимо")
+        raise ProfileError(t("report_rate: булево значение недопустимо", "report_rate: a boolean is not allowed"))
     if isinstance(value, int):
         if value <= 20:
             return value
         if value in (125, 250, 500, 1000):
             return 1000 // value
-        raise ProfileError(f"report_rate: непонятное число {value}")
+        raise ProfileError(t(f"report_rate: непонятное число {value}", f"report_rate: unclear number {value}"))
     if isinstance(value, str):
         match = _RATE_RE.match(value.strip())
         if not match:
-            raise ProfileError(f"report_rate: непонятная запись {value!r}")
+            raise ProfileError(t(f"report_rate: непонятная запись {value!r}", f"report_rate: unclear value {value!r}"))
         number = int(match.group("value"))
         unit = (match.group("unit") or "ms").lower()
         if unit == "hz":
             if number not in (125, 250, 500, 1000):
-                raise ProfileError(f"report_rate: {number} Гц не поддерживается")
+                raise ProfileError(t(f"report_rate: {number} Гц не поддерживается", f"report_rate: {number} Hz is not supported"))
             return 1000 // number
         return number
-    raise ProfileError(f"report_rate: неподдерживаемый тип {type(value).__name__}")
+    raise ProfileError(t(f"report_rate: неподдерживаемый тип {type(value).__name__}", f"report_rate: unsupported type {type(value).__name__}"))
 
 
 @dataclass
@@ -176,19 +178,23 @@ class Profile:
     def validate(self) -> None:
         if self.storage != "host":
             raise ProfileError(
-                f"профиль {self.id!r}: storage={self.storage!r}. Проект хранит профили на хосте "
-                f"и не пишет во встроенную память мыши, поэтому 'onboard' не поддерживается"
+                t(f"профиль {self.id!r}: storage={self.storage!r}. Проект хранит профили на хосте "
+                f"и не пишет во встроенную память мыши, поэтому 'onboard' не поддерживается",
+                  f"profile {self.id!r}: storage={self.storage!r}. The project keeps profiles on the host "
+                  f"and does not write to onboard memory, so 'onboard' is not supported")
             )
         if self.dpi is not None and not 0 < self.dpi < 0xFFFF:
-            raise ProfileError(f"профиль {self.id!r}: DPI {self.dpi} вне диапазона")
+            raise ProfileError(t(f"профиль {self.id!r}: DPI {self.dpi} вне диапазона", f"profile {self.id!r}: DPI {self.dpi} is out of range"))
         for name, action in self.buttons.items():
             if name not in BUTTON_ALIASES:
                 raise ProfileError(
-                    f"профиль {self.id!r}: неизвестная кнопка {name!r}; "
-                    f"известные: {', '.join(sorted(BUTTON_ALIASES))}"
+                    t(f"профиль {self.id!r}: неизвестная кнопка {name!r}; "
+                    f"известные: {', '.join(sorted(BUTTON_ALIASES))}",
+                      f"profile {self.id!r}: unknown button {name!r}; "
+                      f"known: {', '.join(sorted(BUTTON_ALIASES))}")
                 )
             if not isinstance(action, (str, dict)):
-                raise ProfileError(f"профиль {self.id!r}: кнопка {name!r} — ожидается строка или таблица")
+                raise ProfileError(t(f"профиль {self.id!r}: кнопка {name!r} — ожидается строка или таблица", f"profile {self.id!r}: button {name!r} must be a string or a table"))
         validate_lighting(self.lighting, profile_id=self.id)
 
 
@@ -217,15 +223,15 @@ def _validate_button_macros(profile: Profile, macro_ids: set[str], macros_presen
         if referenced is None:
             continue
         if referenced not in macro_ids:
-            hint = "макросы в файле не определены" if not macros_present else f"определены: {', '.join(sorted(macro_ids))}"
-            raise ProfileError(f"профиль {profile.id!r}: кнопка {name!r} ссылается на макрос {referenced!r}, а его нет ({hint})")
+            hint = t("макросы в файле не определены", "no macros are defined in the file") if not macros_present else t(f"определены: {', '.join(sorted(macro_ids))}", f"defined: {', '.join(sorted(macro_ids))}")
+            raise ProfileError(t(f"профиль {profile.id!r}: кнопка {name!r} ссылается на макрос {referenced!r}, а его нет ({hint})", f"profile {profile.id!r}: button {name!r} references macro {referenced!r}, but it does not exist ({hint})"))
 
 
 def parse_profiles(text: str, *, source: str = "<string>") -> ProfileSet:
     data = tomllib.loads(text)
     version = data.get("version", SCHEMA_VERSION)
     if version != SCHEMA_VERSION:
-        raise ProfileError(f"{source}: версия схемы {version}, поддерживается {SCHEMA_VERSION}")
+        raise ProfileError(t(f"{source}: версия схемы {version}, поддерживается {SCHEMA_VERSION}", f"{source}: schema version {version}, supported version is {SCHEMA_VERSION}"))
 
     device_section = data.get("device", {})
     if isinstance(device_section, list):
@@ -251,7 +257,7 @@ def parse_profiles(text: str, *, source: str = "<string>") -> ProfileSet:
         profiles.append(profile)
 
     if not profiles:
-        raise ProfileError(f"{source}: нет ни одного профиля")
+        raise ProfileError(t(f"{source}: нет ни одного профиля", f"{source}: no profiles found"))
 
     macros_raw = list(data.get("macro", []))
     macro_ids = _macro_ids(macros_raw)
@@ -356,7 +362,7 @@ def add_profile(path: Path, profile: Profile) -> None:
     profile.validate()
     text = path.read_text(encoding="utf-8") if path.exists() else f"version = {SCHEMA_VERSION}\n"
     if _profile_id_in(text, profile.id):
-        raise ProfileError(f"профиль {profile.id!r} уже есть в {path}")
+        raise ProfileError(t(f"профиль {profile.id!r} уже есть в {path}", f"profile {profile.id!r} already exists in {path}"))
     _write_checked(path, text.rstrip("\n") + "\n\n" + render_profile(profile) + "\n")
 
 
@@ -407,7 +413,7 @@ def upsert_macro(path: Path, raw: dict, *, replace: bool = False) -> bool:
     existing = _macro_ids(list(tomllib.loads(text).get("macro", [])))
     if macro_id in existing:
         if not replace:
-            raise ProfileError(f"макрос {macro_id!r} уже есть в {path} (добавьте --replace, чтобы заменить)")
+            raise ProfileError(t(f"макрос {macro_id!r} уже есть в {path} (добавьте --replace, чтобы заменить)", f"macro {macro_id!r} already exists in {path} (use --replace to overwrite)"))
         blocks = _split_blocks(text)
         output: list[str] = []
         replaced = False
@@ -432,7 +438,7 @@ def remove_macro(path: Path, macro_id: str) -> None:
         if not (block.lstrip().startswith("[[macro]]") and _block_id(block) == macro_id)
     ]
     if len(remaining) == len(blocks):
-        raise ProfileError(f"макрос {macro_id!r} не найден в {path}")
+        raise ProfileError(t(f"макрос {macro_id!r} не найден в {path}", f"macro {macro_id!r} not found in {path}"))
     _write_checked(path, "\n\n".join(block.rstrip("\n") for block in remaining).rstrip("\n") + "\n")
 
 
@@ -442,7 +448,7 @@ def remove_profile(path: Path, profile_id: str) -> None:
     blocks = _split_blocks(text)
     remaining = [block for block in blocks if _block_id(block) != profile_id]
     if len(remaining) == len(blocks):
-        raise ProfileError(f"профиль {profile_id!r} не найден в {path}")
+        raise ProfileError(t(f"профиль {profile_id!r} не найден в {path}", f"profile {profile_id!r} not found in {path}"))
     _write_checked(path, "\n\n".join(block.rstrip("\n") for block in remaining).rstrip("\n") + "\n")
 
 
@@ -480,7 +486,7 @@ def _parse_lighting(raw: Any) -> dict[str, Any] | None:
     if raw is None:
         return None
     if not isinstance(raw, dict):
-        raise ProfileError("подсветка: ожидается таблица [profile.lighting]")
+        raise ProfileError(t("подсветка: ожидается таблица [profile.lighting]", "lighting: a [profile.lighting] table is expected"))
     parsed: dict[str, Any] = {}
     if "effect" in raw:
         parsed["effect"] = str(raw["effect"]).lower()

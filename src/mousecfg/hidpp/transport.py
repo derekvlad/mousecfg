@@ -13,6 +13,8 @@ import time
 from collections.abc import Callable
 from pathlib import Path
 
+from mousecfg.i18n import t
+
 from . import protocol
 from .protocol import TransportError
 
@@ -43,10 +45,11 @@ class HidrawTransport:
             self._fd = os.open(self.path, os.O_RDWR | os.O_NONBLOCK)
         except PermissionError as exc:
             raise TransportError(
-                f"нет доступа к {self.path}: нужен ACL/правило udev (см. data/60-mousecfg.rules)"
+                t(f"нет доступа к {self.path}: нужен ACL/правило udev (см. data/60-mousecfg.rules)",
+                f"no access to {self.path}: an ACL/udev rule is required (see data/60-mousecfg.rules)")
             ) from exc
         except FileNotFoundError as exc:
-            raise TransportError(f"{self.path} не существует — устройство отключено?") from exc
+            raise TransportError(t(f"{self.path} не существует — устройство отключено?", f"{self.path} does not exist — is the device disconnected?")) from exc
 
     def close(self) -> None:
         if self._fd is not None:
@@ -76,7 +79,7 @@ class HidrawTransport:
         try:
             os.write(fd, frame)
         except OSError as exc:
-            raise TransportError(f"запись в {self.path} не удалась: {exc}") from exc
+            raise TransportError(t(f"запись в {self.path} не удалась: {exc}", f"write to {self.path} failed: {exc}")) from exc
 
     def drain(self) -> None:
         """Съесть всё, что уже висит во входном буфере."""
@@ -94,9 +97,9 @@ class HidrawTransport:
         except BlockingIOError:
             return None
         except OSError as exc:
-            raise TransportError(f"чтение из {self.path} не удалось: {exc}") from exc
+            raise TransportError(t(f"чтение из {self.path} не удалось: {exc}", f"read from {self.path} failed: {exc}")) from exc
         if not data:
-            raise TransportError(f"{self.path} закрылся (устройство отключено?)")
+            raise TransportError(t(f"{self.path} закрылся (устройство отключено?)", f"{self.path} was closed (device disconnected?)"))
         return data
 
     def expect_reply(self, timeout: float = 1.0) -> bytes:
@@ -111,17 +114,17 @@ class HidrawTransport:
         while True:
             remaining = deadline - time.monotonic()
             if remaining <= 0:
-                raise TimeoutError(f"устройство {self.path} не ответило за {timeout:.2f} с")
+                raise TimeoutError(t(f"устройство {self.path} не ответило за {timeout:.2f} с", f"device {self.path} did not respond within {timeout:.2f} s"))
             data = self.read(timeout=min(remaining, 0.25))
             if data is None:
                 continue
             if data[0] in (protocol.SHORT_REPORT_ID, protocol.LONG_REPORT_ID):
                 return data
-            logger.debug("input-отчёт (%#04x байт) пропущен", data[0])
+            logger.debug(t("input-отчёт (%#04x байт) пропущен", "input report (%#04x byte) skipped"), data[0])
 
     def _require_fd(self) -> int:
         if self._fd is None:
-            raise TransportError(f"{self.path} не открыт")
+            raise TransportError(t(f"{self.path} не открыт", f"{self.path} is not open"))
         return self._fd
 
 

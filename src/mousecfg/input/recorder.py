@@ -23,6 +23,8 @@ from dataclasses import dataclass, field
 import evdev
 from evdev import ecodes
 
+from mousecfg.i18n import t
+
 from .actions import code_to_token, parse_keys
 
 logger = logging.getLogger(__name__)
@@ -99,10 +101,12 @@ class MacroRecorder:
             except (PermissionError, OSError) as exc:
                 errors.append(f"{path}: {exc}")
         if not devices:
-            detail = "; ".join(errors) or "не передано ни одного узла"
+            detail = "; ".join(errors) or t("не передано ни одного узла", "no device was given")
             raise RecorderError(
-                "нет доступа к узлам ввода для записи "
-                f"({detail}). Нужно правило udev 70-mousecfg-input.rules или группа input."
+                t("нет доступа к узлам ввода для записи "
+                f"({detail}). Нужно правило udev 70-mousecfg-input.rules или группа input.",
+                "no access to input devices for recording "
+                f"({detail}). The udev rule 70-mousecfg-input.rules or the input group is required.")
             )
         return cls(devices=devices, **kwargs)
 
@@ -146,7 +150,7 @@ class MacroRecorder:
             self._select_loop()
         except Exception as exc:  # noqa: BLE001
             self._error = str(exc)
-            logger.warning("запись макроса прервана: %s", exc)
+            logger.warning(t("запись макроса прервана: %s", "macro recording interrupted: %s"), exc)
 
     def _select_loop(self) -> None:
         import select

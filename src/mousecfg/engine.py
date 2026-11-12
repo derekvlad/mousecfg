@@ -11,6 +11,7 @@ from dataclasses import dataclass, field
 
 from .hidpp.device import HidppDevice
 from .hidpp.protocol import DeviceError, FeatureUnsupportedError, ProtocolError
+from .i18n import t
 from .profiles import Profile
 
 logger = logging.getLogger(__name__)
@@ -28,13 +29,13 @@ class ApplyResult:
         return not self.error
 
     def describe(self) -> str:
-        parts = [f"профиль {self.profile_id}"]
+        parts = [t(f"профиль {self.profile_id}", f"profile {self.profile_id}")]
         if self.applied:
             parts.append(", ".join(f"{key}={value}" for key, value in self.applied.items()))
         if self.skipped:
-            parts.append("пропущено: " + "; ".join(self.skipped))
+            parts.append(t("пропущено: ", "skipped: ") + "; ".join(self.skipped))
         if self.error:
-            parts.append(f"ошибка: {self.error}")
+            parts.append(t(f"ошибка: {self.error}", f"error: {self.error}"))
         return " | ".join(parts)
 
 
@@ -51,7 +52,7 @@ def plan_button_actions(profile: Profile) -> dict[str, str]:
         try:
             plan[name] = parse_action(spec).describe()
         except ActionError as exc:
-            plan[name] = f"ошибка: {exc}"
+            plan[name] = t(f"ошибка: {exc}", f"error: {exc}")
     return plan
 
 
@@ -80,7 +81,7 @@ def apply_profile(device: HidppDevice, profile: Profile) -> ApplyResult:
         _apply_lighting(device, profile, result)
 
     if profile.buttons:
-        result.skipped.append("кнопки применяет evdev-слой (см. mousecfg run-profile)")
+        result.skipped.append(t("кнопки применяет evdev-слой (см. mousecfg run-profile)", "buttons are applied by the evdev layer (see mousecfg run-profile)"))
 
     return result
 
@@ -91,14 +92,14 @@ def _apply_lighting(device: HidppDevice, profile: Profile, result: ApplyResult) 
 
     lighting = profile.lighting or {}
     if not device.has_feature(0x8071):
-        result.skipped.append("подсветка: устройство не поддерживает RGB_EFFECTS")
+        result.skipped.append(t("подсветка: устройство не поддерживает RGB_EFFECTS", "lighting: the device does not support RGB_EFFECTS"))
         return
 
     effect_name = str(lighting.get("effect", "static" if "color" in lighting else "disabled")).lower()
     effects_by_name = {name: effect_id for effect_id, (name, _) in LIGHTING_EFFECTS.items()}
     effect_id = effects_by_name.get(effect_name)
     if effect_id is None:
-        result.skipped.append(f"подсветка: эффект {effect_name!r} неизвестен устройству")
+        result.skipped.append(t(f"подсветка: эффект {effect_name!r} неизвестен устройству", f"lighting: effect {effect_name!r} is unknown to the device"))
         return
 
     schema = LIGHTING_EFFECTS[effect_id][1]
@@ -121,7 +122,7 @@ def _apply_lighting(device: HidppDevice, profile: Profile, result: ApplyResult) 
     try:
         device.set_lighting(effect_id, params, zone=zone)
     except (FeatureUnsupportedError, DeviceError, ProtocolError, TimeoutError, ValueError) as exc:
-        result.skipped.append(f"подсветка: {exc}")
+        result.skipped.append(t(f"подсветка: {exc}", f"lighting: {exc}"))
         return
     result.applied["lighting"] = effect_name
 

@@ -17,6 +17,8 @@ from dataclasses import dataclass, field
 import evdev
 from evdev import ecodes
 
+from mousecfg.i18n import t
+
 from .actions import Action, ActionKind, button_name
 from .emitter import Emitter
 from .macros import Macro, MacroRunner
@@ -49,10 +51,13 @@ class RemapStats:
 
     def summary(self) -> str:
         if not self.latencies_ms:
-            return f"событий {self.events}, перехвачено {self.remapped}, пропущено {self.passed}"
+            return t(f"событий {self.events}, перехвачено {self.remapped}, пропущено {self.passed}",
+                     f"events {self.events}, intercepted {self.remapped}, passed {self.passed}")
         return (
-            f"событий {self.events}, перехвачено {self.remapped}, пропущено {self.passed}, "
-            f"задержка p50 {self.percentile(50):.2f} мс, p95 {self.percentile(95):.2f} мс"
+            t(f"событий {self.events}, перехвачено {self.remapped}, пропущено {self.passed}, "
+              f"задержка p50 {self.percentile(50):.2f} мс, p95 {self.percentile(95):.2f} мс",
+              f"events {self.events}, intercepted {self.remapped}, passed {self.passed}, "
+              f"latency p50 {self.percentile(50):.2f} ms, p95 {self.percentile(95):.2f} ms")
         )
 
 
@@ -85,7 +90,7 @@ class Remapper:
         self.emitter.create()
         self.macro_runner = MacroRunner(self.emitter)
         self.device.grab()
-        logger.info("перехват %s (%s) активен", self.device.path, self.device.name)
+        logger.info(t("перехват %s (%s) активен", "interception of %s (%s) is active"), self.device.path, self.device.name)
         try:
             self._loop()
         finally:
@@ -146,7 +151,7 @@ class Remapper:
             return
 
         if event.value == 1:  # нажатие
-            logger.debug("кнопка %s -> %s", button_name(event.code), action.describe())
+            logger.debug(t("кнопка %s -> %s", "button %s -> %s"), button_name(event.code), action.describe())
             self._press(event.code, action)
             self.stats.note_latency(started)
         else:
@@ -158,7 +163,7 @@ class Remapper:
             macro = self.macros.get(action.macro or "")
             if macro is None:
                 if action.macro not in self._missing_macros:
-                    logger.warning("макрос %r не найден, действие по кнопке %s пропущено", action.macro, button_name(code))
+                    logger.warning(t("макрос %r не найден, действие по кнопке %s пропущено", "macro %r not found, action for button %s skipped"), action.macro, button_name(code))
                     self._missing_macros.add(str(action.macro))
                 return
 
@@ -186,7 +191,7 @@ class Remapper:
             self._held.setdefault(code, first)
             self._arm_release(code, normal)
         elif not modifiers:
-            logger.warning("действие кнопки %s пустое", button_name(code))
+            logger.warning(t("действие кнопки %s пустое", "the action for button %s is empty"), button_name(code))
 
     def _release(self, code: int, action: Action) -> None:
         timer = self._release_timers.pop(code, None)
@@ -210,7 +215,7 @@ class Remapper:
         timer.start()
 
     def _auto_release(self, code: int, codes: list[int]) -> None:
-        logger.debug("автоотпускание после %d мс: %s", self.auto_release_ms, [button_name(item) for item in codes])
+        logger.debug(t("автоотпускание после %d мс: %s", "auto-release after %d ms: %s"), self.auto_release_ms, [button_name(item) for item in codes])
         held = self._held.pop(code, None)
         if held is not None:
             self.emitter.release(held)

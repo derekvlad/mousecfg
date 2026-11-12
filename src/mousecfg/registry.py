@@ -13,6 +13,7 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
 from . import config
+from .i18n import t
 
 logger = logging.getLogger(__name__)
 
@@ -40,13 +41,13 @@ class DeviceState:
     extra: dict = field(default_factory=dict)
 
     def describe(self) -> str:
-        bits = [self.name or self.usb_id or "неизвестная мышь"]
+        bits = [self.name or self.usb_id or t("неизвестная мышь", "unknown mouse")]
         if self.active_profile:
-            bits.append(f"профиль: {self.active_profile}")
+            bits.append(t(f"профиль: {self.active_profile}", f"profile: {self.active_profile}"))
         if self.mode:
-            bits.append(f"режим: {self.mode}")
+            bits.append(t(f"режим: {self.mode}", f"mode: {self.mode}"))
         if self.input_path:
-            bits.append(f"ввод: {self.input_path}")
+            bits.append(t(f"ввод: {self.input_path}", f"input: {self.input_path}"))
         return " | ".join(bits)
 
 
@@ -69,11 +70,11 @@ def load_state() -> dict[str, DeviceState]:
     try:
         raw = json.loads(path.read_text(encoding="utf-8"))
     except ValueError:
-        logger.warning("не удалось разобрать %s, начинаю с чистого состояния", path)
+        logger.warning(t("не удалось разобрать %s, начинаю с чистого состояния", "failed to parse %s, starting from a clean state"), path)
         return {}
 
     if raw.get("version") != STATE_VERSION:
-        logger.debug("версия состояния %s устарела", raw.get("version"))
+        logger.debug(t("версия состояния %s устарела", "state version %s is outdated"), raw.get("version"))
         return {}
 
     devices: dict[str, DeviceState] = {}

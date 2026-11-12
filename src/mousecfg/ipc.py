@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any
 
 from . import config
+from .i18n import t
 
 logger = logging.getLogger(__name__)
 
@@ -53,10 +54,10 @@ def _receive_line(buffer: bytes, sock: socket.socket) -> tuple[bytes, bytes]:
     while b"\n" not in buffer:
         chunk = sock.recv(65536)
         if not chunk:
-            raise IpcError("соединение закрыто")
+            raise IpcError(t("соединение закрыто", "connection closed"))
         buffer += chunk
         if len(buffer) > MAX_MESSAGE_BYTES:
-            raise IpcError("слишком большое сообщение")
+            raise IpcError(t("слишком большое сообщение", "message too large"))
     line, _, rest = buffer.partition(b"\n")
     return line, rest
 
@@ -76,16 +77,16 @@ class Client:
                 _send(sock, {"v": PROTOCOL_VERSION, "method": method, "params": params})
                 line, _ = _receive_line(b"", sock)
         except FileNotFoundError as exc:
-            raise IpcError(f"демон не запущен (нет сокета {self.path})") from exc
+            raise IpcError(t(f"демон не запущен (нет сокета {self.path})", f"daemon is not running (no socket {self.path})")) from exc
         except ConnectionRefusedError as exc:
-            raise IpcError(f"демон не отвечает на {self.path}") from exc
+            raise IpcError(t(f"демон не отвечает на {self.path}", f"daemon does not respond on {self.path}")) from exc
         except TimeoutError as exc:
-            raise IpcError("демон не ответил вовремя") from exc
+            raise IpcError(t("демон не ответил вовремя", "daemon did not respond in time")) from exc
 
         try:
             reply = json.loads(line.decode("utf-8"))
         except ValueError as exc:
-            raise IpcError("ответ демона не разбирается") from exc
+            raise IpcError(t("ответ демона не разбирается", "cannot parse the daemon response")) from exc
 
         if reply.get("error"):
             raise IpcError(str(reply["error"]))
@@ -148,19 +149,19 @@ class Server:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         if self.path.exists():
             if _socket_is_alive(self.path):
-                raise IpcError(f"демон уже запущен и слушает {self.path}")
-            logger.info("убираю осиротевший сокет %s", self.path)
+                raise IpcError(t(f"демон уже запущен и слушает {self.path}", f"daemon is already running and listening on {self.path}"))
+            logger.info(t("убираю осиротевший сокет %s", "removing orphaned socket %s"), self.path)
             self.path.unlink()
         self._sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         self._sock.bind(str(self.path))
         self.path.chmod(0o600)
         self._bound_inode = self.path.stat().st_ino
         self._sock.listen(8)
-        logger.info("демон слушает %s", self.path)
+        logger.info(t("демон слушает %s", "daemon listens on %s"), self.path)
 
     def serve_forever(self) -> None:
         if self._sock is None:
-            raise IpcError("сервер не запущен")
+            raise IpcError(t("сервер не запущен", "server is not running"))
         while not self._stop.is_set():
             try:
                 conn, _ = self._sock.accept()
@@ -217,10 +218,10 @@ class Server:
                 result = self.handler(method, params)
                 _send(conn, {"result": result})
             except Exception as exc:  # noqa: BLE001 — ошибки уходят клиенту как есть
-                logger.warning("ошибка обработки %s: %s", method, exc)
+                logger.warning(t("ошибка обработки %s: %s", "failed to handle %s: %s"), method, exc)
                 _send(conn, {"error": str(exc)})
         except (IpcError, ValueError) as exc:
-            logger.debug("соединение закрыто: %s", exc)
+            logger.debug(t("соединение закрыто: %s", "connection closed: %s"), exc)
         finally:
             with contextlib.suppress(OSError):
                 conn.close()

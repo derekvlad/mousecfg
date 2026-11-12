@@ -13,6 +13,8 @@ from pathlib import Path
 import evdev
 from evdev import ecodes
 
+from mousecfg.i18n import t
+
 logger = logging.getLogger(__name__)
 
 BUTTON_CAPABILITIES = (ecodes.EV_KEY,)
@@ -28,7 +30,7 @@ class InputDeviceInfo:
 
     def describe(self) -> str:
         names = ", ".join(button_name(code) for code in self.buttons)
-        return f"{self.path}  {self.name}  [{self.phys}]  кнопки: {names or '-'}"
+        return t(f"{self.path}  {self.name}  [{self.phys}]  кнопки: {names or '-'}", f"{self.path}  {self.name}  [{self.phys}]  buttons: {names or '-'}")
 
 
 def button_name(code: int) -> str:
@@ -66,7 +68,7 @@ def iter_input_devices() -> list[InputDeviceInfo]:
         try:
             device = evdev.InputDevice(str(path))
         except PermissionError:
-            logger.debug("нет доступа к %s", path)
+            logger.debug(t("нет доступа к %s", "no access to %s"), path)
             continue
         except OSError:
             continue
@@ -99,15 +101,15 @@ def find_pointer_devices(*, name_hint: str = "", serial: str = "") -> list[Input
 def require_pointer_device(*, name_hint: str = "", serial: str = "") -> InputDeviceInfo:
     candidates = find_pointer_devices(name_hint=name_hint, serial=serial)
     if not candidates:
-        scope = ", ".join(filter(None, (f"имя ~ {name_hint!r}" if name_hint else "", f"serial={serial}" if serial else "")))
+        scope = ", ".join(filter(None, (t(f"имя ~ {name_hint!r}", f"name ~ {name_hint!r}") if name_hint else "", f"serial={serial}" if serial else "")))
         raise LookupError(
-            "не найден event-узел мыши"
+            t("не найден event-узел мыши", "mouse event device not found")
             + (f" ({scope})" if scope else "")
-            + ". Проверьте права на /dev/input/event* (нужно правило udev или группа input)."
+            + t(". Проверьте права на /dev/input/event* (нужно правило udev или группа input).", ". Check permissions on /dev/input/event* (a udev rule or the input group is required).")
         )
     if len(candidates) > 1:
         logger.warning(
-            "найдено несколько мышей, беру первую: %s",
+            t("найдено несколько мышей, беру первую: %s", "several mice found, using the first one: %s"),
             "; ".join(info.path for info in candidates),
         )
     return candidates[0]

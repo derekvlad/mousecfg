@@ -16,6 +16,8 @@ import subprocess
 from dataclasses import dataclass
 from typing import Protocol
 
+from .i18n import t
+
 logger = logging.getLogger(__name__)
 
 COMMAND_TIMEOUT = 2.0
@@ -43,10 +45,10 @@ def _run(command: list[str]) -> str | None:
     try:
         completed = subprocess.run(command, capture_output=True, text=True, timeout=COMMAND_TIMEOUT, check=False)
     except (OSError, subprocess.TimeoutExpired) as exc:
-        logger.debug("%s не сработал: %s", command[0], exc)
+        logger.debug(t("%s не сработал: %s", "%s failed: %s"), command[0], exc)
         return None
     if completed.returncode != 0:
-        logger.debug("%s вернул код %d: %s", command[0], completed.returncode, completed.stderr.strip())
+        logger.debug(t("%s вернул код %d: %s", "%s returned code %d: %s"), command[0], completed.returncode, completed.stderr.strip())
         return None
     return completed.stdout
 
@@ -159,9 +161,9 @@ def detect_watcher() -> Watcher | None:
     for watcher in WATCHERS:
         try:
             if watcher.available():
-                logger.info("источник активного окна: %s", watcher.name)
+                logger.info(t("источник активного окна: %s", "focused window source: %s"), watcher.name)
                 return watcher
         except Exception as exc:  # noqa: BLE001 — источник фокуса не должен ронять демон
-            logger.debug("проверка %s упала: %s", watcher.name, exc)
-    logger.info("источник активного окна не найден: переключение по приложению выключено")
+            logger.debug(t("проверка %s упала: %s", "check of %s failed: %s"), watcher.name, exc)
+    logger.info(t("источник активного окна не найден: переключение по приложению выключено", "focused window source not found: per-application switching is disabled"))
     return None

@@ -20,6 +20,8 @@ from __future__ import annotations
 import enum
 from dataclasses import dataclass
 
+from mousecfg.i18n import t
+
 from .protocol import FeatureId, ProtocolError
 
 
@@ -118,48 +120,53 @@ def _consent(feature: int, function: int, note: str) -> None:
 
 
 # --- чтение: безопасно всегда ----------------------------------------
-_allow(FeatureId.ROOT, 0x10, "ping: запрос версии протокола")
-_allow(FeatureId.ROOT, 0x00, "получение индекса фичи по её id")
-_allow(FeatureId.FEATURE_SET, 0x00, "количество фич")
-_allow(FeatureId.FEATURE_SET, 0x10, "id фичи по индексу")
-_allow(FeatureId.DEVICE_NAME, 0x00, "длина имени")
-_allow(FeatureId.DEVICE_NAME, 0x10, "фрагмент имени")
-_allow(FeatureId.DEVICE_NAME, 0x20, "тип устройства")
-_allow(FeatureId.DEVICE_FW_VERSION, 0x00, "число сущностей прошивки")
-_allow(FeatureId.DEVICE_FW_VERSION, 0x10, "информация о прошивке")
-_allow(FeatureId.ADJUSTABLE_DPI, 0x00, "число сенсоров")
-_allow(FeatureId.ADJUSTABLE_DPI, 0x10, "список поддерживаемых DPI")
-_allow(FeatureId.ADJUSTABLE_DPI, 0x20, "текущий DPI")
-_allow(FeatureId.REPORT_RATE, 0x00, "поддерживаемые частоты опроса")
-_allow(FeatureId.REPORT_RATE, 0x10, "текущая частота опроса")
-_allow(FeatureId.ONBOARD_PROFILES, 0x20, "текущий режим устройства (On-Board/Host)")
-_allow(FeatureId.MOUSE_BUTTON_SPY, 0x00, "число кнопок")
-_allow(FeatureId.MOUSE_BUTTON_SPY, 0x10, "информация о кнопке")
-_allow(FeatureId.RGB_EFFECTS, 0x00, "возможности подсветки, зоны и эффекты (чтение)")
-_allow(FeatureId.PER_KEY_LIGHTING_V2, 0x00, "возможности per-key подсветки")
-_allow(FeatureId.PER_KEY_LIGHTING_V2, 0x10, "информация о зоне per-key")
+_allow(FeatureId.ROOT, 0x10, t("ping: запрос версии протокола", "ping: protocol version request"))
+_allow(FeatureId.ROOT, 0x00, t("получение индекса фичи по её id", "get a feature index by its id"))
+_allow(FeatureId.FEATURE_SET, 0x00, t("количество фич", "number of features"))
+_allow(FeatureId.FEATURE_SET, 0x10, t("id фичи по индексу", "feature id by index"))
+_allow(FeatureId.DEVICE_NAME, 0x00, t("длина имени", "name length"))
+_allow(FeatureId.DEVICE_NAME, 0x10, t("фрагмент имени", "name chunk"))
+_allow(FeatureId.DEVICE_NAME, 0x20, t("тип устройства", "device kind"))
+_allow(FeatureId.DEVICE_FW_VERSION, 0x00, t("число сущностей прошивки", "number of firmware entities"))
+_allow(FeatureId.DEVICE_FW_VERSION, 0x10, t("информация о прошивке", "firmware information"))
+_allow(FeatureId.ADJUSTABLE_DPI, 0x00, t("число сенсоров", "number of sensors"))
+_allow(FeatureId.ADJUSTABLE_DPI, 0x10, t("список поддерживаемых DPI", "list of supported DPI values"))
+_allow(FeatureId.ADJUSTABLE_DPI, 0x20, t("текущий DPI", "current DPI"))
+_allow(FeatureId.REPORT_RATE, 0x00, t("поддерживаемые частоты опроса", "supported report rates"))
+_allow(FeatureId.REPORT_RATE, 0x10, t("текущая частота опроса", "current report rate"))
+_allow(FeatureId.ONBOARD_PROFILES, 0x20, t("текущий режим устройства (On-Board/Host)", "current device mode (On-Board/Host)"))
+_allow(FeatureId.MOUSE_BUTTON_SPY, 0x00, t("число кнопок", "number of buttons"))
+_allow(FeatureId.MOUSE_BUTTON_SPY, 0x10, t("информация о кнопке", "button information"))
+_allow(FeatureId.RGB_EFFECTS, 0x00, t("возможности подсветки, зоны и эффекты (чтение)", "lighting capabilities, zones and effects (read)"))
+_allow(FeatureId.PER_KEY_LIGHTING_V2, 0x00, t("возможности per-key подсветки", "per-key lighting capabilities"))
+_allow(FeatureId.PER_KEY_LIGHTING_V2, 0x10, t("информация о зоне per-key", "per-key zone information"))
 
 # --- запись рантайм-настроек: волатильно ------------------------------
 _allow(
     FeatureId.ADJUSTABLE_DPI,
     0x30,
-    "установка DPI: живёт в RAM до отключения мыши",
+    t("установка DPI: живёт в RAM до отключения мыши", "set DPI: lives in RAM until the mouse is disconnected"),
     mutating=True,
 )
-_allow(FeatureId.REPORT_RATE, 0x20, "смена частоты опроса: волатильно", mutating=True)
+_allow(FeatureId.REPORT_RATE, 0x20, t("смена частоты опроса: волатильно", "change report rate: volatile"), mutating=True)
 _allow(
     FeatureId.RGB_EFFECTS,
     0x50,
-    "передача управления подсветкой хосту (SW control). Волатильно: "
+    t("передача управления подсветкой хосту (SW control). Волатильно: "
     "живёт в RAM до отключения мыши; без него прошивка рисует цвет "
     "onboard-профиля и игнорирует наши эффекты",
+      "hand lighting control over to the host (SW control). Volatile: "
+      "lives in RAM until the mouse is disconnected; without it the firmware "
+      "draws the onboard profile colour and ignores our effects"),
     mutating=True,
 )
 _allow(
     FeatureId.RGB_EFFECTS,
     0x10,
-    "эффект подсветки зоны (цвет/яркость/режим): волатильно, "
+    t("эффект подсветки зоны (цвет/яркость/режим): волатильно, "
     "пропадёт при отключении мыши — как и остальные настройки профиля",
+      "zone lighting effect (colour/brightness/mode): volatile, "
+      "lost when the mouse is disconnected, like the rest of the profile"),
     mutating=True,
 )
 
@@ -167,29 +174,33 @@ _allow(
 _deny(
     FeatureId.ONBOARD_PROFILES,
     0x50,
-    "чтение секторов встроенной памяти: не пишет, но и не нужно проекту",
+    t("чтение секторов встроенной памяти: не пишет, но и не нужно проекту", "read onboard memory sectors: does not write, but the project does not need it"),
 )
-_deny(FeatureId.ONBOARD_PROFILES, 0x60, "начало записи сектора onboard-памяти")
-_deny(FeatureId.ONBOARD_PROFILES, 0x70, "запись данных сектора onboard-памяти")
-_deny(FeatureId.ONBOARD_PROFILES, 0x80, "финализация записи сектора onboard-памяти")
-_deny(FeatureId.ONBOARD_PROFILES, 0x30, "выбор активного onboard-профиля")
-_deny(FeatureId.DEVICE_RESET, 0x00, "сброс устройства может стереть конфигурацию")
+_deny(FeatureId.ONBOARD_PROFILES, 0x60, t("начало записи сектора onboard-памяти", "start writing an onboard memory sector"))
+_deny(FeatureId.ONBOARD_PROFILES, 0x70, t("запись данных сектора onboard-памяти", "write onboard memory sector data"))
+_deny(FeatureId.ONBOARD_PROFILES, 0x80, t("финализация записи сектора onboard-памяти", "finalize onboard memory sector write"))
+_deny(FeatureId.ONBOARD_PROFILES, 0x30, t("выбор активного onboard-профиля", "select the active onboard profile"))
+_deny(FeatureId.DEVICE_RESET, 0x00, t("сброс устройства может стереть конфигурацию", "device reset may erase the configuration"))
 _deny(
     FeatureId.RGB_EFFECTS,
     0x30,
-    "NvConfig подсветки: пишет эффект/цвет в энергонезависимую память мыши "
+    t("NvConfig подсветки: пишет эффект/цвет в энергонезависимую память мыши "
     "(Solaar держит её запрещённой по умолчанию для незнакомых моделей)",
+      "lighting NvConfig: writes the effect/colour to the mouse non-volatile memory "
+      "(Solaar keeps it denied by default for unknown models)"),
 )
-_deny(FeatureId.CONFIG_DEVICE_PROPS, 0x20, "изменение свойств конфигурации устройства")
-_deny(FeatureId.ENABLE_HIDDEN_FEATURES, 0x00, "включение скрытых фич — путь к неизвестным записям")
-_deny(FeatureId.DFU_CONTROL_SIGNED, 0x20, "прошивка устройства")
+_deny(FeatureId.CONFIG_DEVICE_PROPS, 0x20, t("изменение свойств конфигурации устройства", "change device configuration properties"))
+_deny(FeatureId.ENABLE_HIDDEN_FEATURES, 0x00, t("включение скрытых фич — путь к неизвестным записям", "enabling hidden features leads to unknown writes"))
+_deny(FeatureId.DFU_CONTROL_SIGNED, 0x20, t("прошивка устройства", "device firmware update"))
 
 # --- единственная разрешённая запись в конфигурацию устройства --------
 _consent(
     FeatureId.ONBOARD_PROFILES,
     0x10,
-    "переключение режима устройства. Host mode — обязательное условие того, "
+    t("переключение режима устройства. Host mode — обязательное условие того, "
     "чтобы настройки вообще применялись; выполняется один раз с явного согласия",
+      "switch the device mode. Host mode is required for settings to apply at all; "
+      "performed once with explicit consent"),
 )
 
 
@@ -200,7 +211,8 @@ class DeniedCommand(ProtocolError):
         self.feature = feature
         self.function = function
         self.reason = reason
-        super().__init__(f"запрещено: {function_name(feature, function)} ({feature:#06x}/{function:#04x}) — {reason}")
+        super().__init__(t(f"запрещено: {function_name(feature, function)} ({feature:#06x}/{function:#04x}) — {reason}",
+                           f"denied: {function_name(feature, function)} ({feature:#06x}/{function:#04x}) — {reason}"))
 
 
 def check(feature: int, function: int, *, allowed_consented: frozenset[tuple[int, int]] = frozenset()) -> Rule:
@@ -214,7 +226,8 @@ def check(feature: int, function: int, *, allowed_consented: frozenset[tuple[int
         raise DeniedCommand(
             feature,
             function,
-            "команда неизвестна политике; неизвестное считается записью в память устройства",
+            t("команда неизвестна политике; неизвестное считается записью в память устройства",
+                "the command is unknown to the policy; anything unknown is treated as a memory write"),
         )
     if rule.classification is Classification.PERSISTENT:
         raise DeniedCommand(feature, function, rule.note)
@@ -222,7 +235,8 @@ def check(feature: int, function: int, *, allowed_consented: frozenset[tuple[int
         raise DeniedCommand(
             feature,
             function,
-            f"{rule.note}. Требуется явное согласие (--allow-onboard-switch)",
+            t(f"{rule.note}. Требуется явное согласие (--allow-onboard-switch)",
+                f"{rule.note}. Explicit consent is required (--allow-onboard-switch)"),
         )
     return rule
 
@@ -232,6 +246,7 @@ def audit() -> dict[str, list[str]]:
     result: dict[str, list[str]] = {c.value: [] for c in Classification}
     for (feature, function), rule in sorted(POLICY.items()):
         result[rule.classification.value].append(
-            f"{feature:#06x}/{function:#04x} {function_name(feature, function)} — {rule.note}"
+            t(f"{feature:#06x}/{function:#04x} {function_name(feature, function)} — {rule.note}",
+                f"{feature:#06x}/{function:#04x} {function_name(feature, function)} — {rule.note}")
         )
     return result

@@ -8,23 +8,26 @@ import sys
 
 from . import config
 from .daemon import Daemon, DaemonConfig
+from .i18n import t
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="mousecfg-daemon",
-        description="Демон mousecfg: следит за мышью и применяет профили. Во флеш мыши ничего не пишет.",
+        description=t("Демон mousecfg: следит за мышью и применяет профили. Во флеш мыши ничего не пишет.",
+            "mousecfg daemon: watches the mouse and applies profiles. Nothing is written to onboard memory."),
     )
     parser.add_argument("-v", "--verbose", action="count", default=0)
-    parser.add_argument("--dry-run", action="store_true", help="ничего не менять на устройстве")
+    parser.add_argument("--dry-run", action="store_true", help=t("ничего не менять на устройстве", "do not change anything on the device"))
     parser.add_argument("--allow-onboard-switch", action="store_true")
-    parser.add_argument("--profiles-dir", default=None, help=f"каталог профилей (по умолчанию {config.profiles_dir()})")
-    parser.add_argument("--no-buttons", action="store_true", help="не перехватывать кнопки (только DPI и rate)")
-    parser.add_argument("--no-apps", action="store_true", help="не следить за активным приложением")
+    parser.add_argument("--profiles-dir", default=None, help=t(f"каталог профилей (по умолчанию {config.profiles_dir()})", f"profiles directory (default {config.profiles_dir()})"))
+    parser.add_argument("--no-buttons", action="store_true", help=t("не перехватывать кнопки (только DPI и rate)", "do not intercept buttons (DPI and rate only)"))
+    parser.add_argument("--no-apps", action="store_true", help=t("не следить за активным приложением", "do not watch the focused application"))
     parser.add_argument(
         "--no-auto-host",
         action="store_true",
-        help="не повторять переход On-Board → Host автоматически (даже если согласие сохранено)",
+        help=t("не повторять переход On-Board → Host автоматически (даже если согласие сохранено)",
+            "do not repeat the On-Board → Host switch automatically (even if consent was recorded)"),
     )
     args = parser.parse_args(argv)
 

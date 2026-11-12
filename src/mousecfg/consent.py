@@ -25,6 +25,7 @@ import logging
 from pathlib import Path
 
 from . import config, registry
+from .i18n import t
 
 logger = logging.getLogger(__name__)
 
@@ -43,7 +44,7 @@ def load() -> set[str]:
     try:
         raw = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
-        logger.warning("не удалось прочитать %s, согласие считается невыданным", path)
+        logger.warning(t("не удалось прочитать %s, согласие считается невыданным", "failed to read %s, consent is treated as not given"), path)
         return set()
     if raw.get("version") != CONSENT_VERSION:
         return set()
@@ -68,7 +69,7 @@ def record(key: str) -> None:
         return
     keys.add(key)
     _save(keys)
-    logger.info("запомнено согласие на переход On-Board → Host: %s", key)
+    logger.info(t("запомнено согласие на переход On-Board → Host: %s", "recorded consent for On-Board → Host switch: %s"), key)
 
 
 def granted(key: str) -> bool:

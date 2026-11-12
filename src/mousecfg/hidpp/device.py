@@ -12,6 +12,8 @@ import struct
 import time
 from dataclasses import dataclass, field
 
+from mousecfg.i18n import t
+
 from . import guard, protocol
 from .protocol import (
     DeviceError,
@@ -89,13 +91,14 @@ def _lighting_effect_bytes(slot: int, effect_id: int, params: dict[str, int]) ->
     unknown = set(params) - set(schema)
     if unknown:
         raise ValueError(
-            f"эффект {lighting_effect_name(effect_id)!r} не знает параметров: {', '.join(sorted(unknown))}"
+            t(f"эффект {lighting_effect_name(effect_id)!r} не знает параметров: {', '.join(sorted(unknown))}",
+              f"effect {lighting_effect_name(effect_id)!r} does not know parameters: {', '.join(sorted(unknown))}")
         )
     body = bytearray(10)
     for name, (offset, size) in schema.items():
         value = int(params.get(name, 0))
         if not 0 <= value < (1 << (8 * size)):
-            raise ValueError(f"параметр {name}={value} не влезает в {size} байт")
+            raise ValueError(t(f"параметр {name}={value} не влезает в {size} байт", f"parameter {name}={value} does not fit into {size} bytes"))
         body[offset : offset + size] = value.to_bytes(size, "big")
     return bytes((slot,)) + bytes(body)
 
@@ -175,7 +178,7 @@ class HidppDevice:
                 continue
             major, minor = reply.params[0], reply.params[1]
             return major, minor
-        raise ProtocolError("устройство не ответило на ping")
+        raise ProtocolError(t("устройство не ответило на ping", "the device did not answer the ping"))
 
     def request(
         self,
@@ -212,7 +215,7 @@ class HidppDevice:
                 if attempt == retries:
                     raise
                 logger.debug(
-                    "нет ответа на %s (%#06x/%#04x), повтор %d",
+                    t("нет ответа на %s (%#06x/%#04x), повтор %d", "no reply to %s (%#06x/%#04x), retry %d"),
                     guard.function_name(feature, function),
                     feature,
                     function,
@@ -221,9 +224,9 @@ class HidppDevice:
             except DeviceError as exc:
                 if exc.code != BUSY_ERROR_CODE or attempt == retries:
                     raise
-                logger.debug("устройство занято (BUSY), повтор %d", attempt + 1)
+                logger.debug(t("устройство занято (BUSY), повтор %d", "device is busy (BUSY), retry %d"), attempt + 1)
             time.sleep(RETRY_DELAY * (attempt + 1))
-        raise ProtocolError("недостижимо")
+        raise ProtocolError(t("недостижимо", "unreachable"))
 
     def _wait_for_reply(self, feature: int, function: int, feature_index: int, timeout: float) -> bytes:
         expected_function = function | protocol.SOFTWARE_ID
@@ -234,15 +237,15 @@ class HidppDevice:
             except ProtocolError:
                 # Мышь шлёт по этому же узлу обычные input-отчёты и свои
                 # нотификации. Это не ошибка — просто читаем дальше.
-                logger.debug("не HID++ кадр, пропускаем: %s", raw.hex())
+                logger.debug(t("не HID++ кадр, пропускаем: %s", "not a HID++ frame, skipping: %s"), raw.hex())
                 continue
             if reply.is_error:
                 raise DeviceError(feature, function, reply.error_code or 0)
             if reply.feature_index != feature_index or reply.function != expected_function:
-                logger.debug("чужой кадр, пропускаем: %s", raw.hex())
+                logger.debug(t("чужой кадр, пропускаем: %s", "foreign frame, skipping: %s"), raw.hex())
                 continue
             return reply.params
-        raise ProtocolError("не удалось получить ответ на наш запрос")
+        raise ProtocolError(t("не удалось получить ответ на наш запрос", "failed to get a reply to our request"))
 
     # -- карта фич ------------------------------------------------------
     def feature_index(self, feature: int) -> int:
@@ -263,14 +266,14 @@ class HidppDevice:
         root_reply = self._raw_request(0, 0x00, struct.pack("!H", FeatureId.FEATURE_SET))
         feature_set_index = root_reply[0]
         if not feature_set_index:
-            raise ProtocolError("устройство без FEATURE_SET: HID++ 2.0 не поддерживается")
+            raise ProtocolError(t("устройство без FEATURE_SET: HID++ 2.0 не поддерживается", "device without FEATURE_SET: HID++ 2.0 is not supported"))
 
         features[FeatureId.ROOT] = 0
         features[FeatureId.FEATURE_SET] = feature_set_index
 
         count_reply = self._raw_request(feature_set_index, 0x00)
         count = count_reply[0]
-        logger.debug("FEATURE_SET: %d фич, индекс 0x%02x", count, feature_set_index)
+        logger.debug(t("FEATURE_SET: %d фич, индекс 0x%02x", "FEATURE_SET: %d features, index 0x%02x"), count, feature_set_index)
 
         for index in range(count + 1):
             if index in (0, feature_set_index):
@@ -278,7 +281,7 @@ class HidppDevice:
             try:
                 reply = self._raw_request(feature_set_index, 0x10, bytes((index,)))
             except DeviceError as exc:
-                logger.debug("фича по индексу %d недоступна: %s", index, exc)
+                logger.debug(t("фича по индексу %d недоступна: %s", "feature at index %d is unavailable: %s"), index, exc)
                 continue
             if len(reply) < 2:
                 continue
@@ -315,16 +318,16 @@ class HidppDevice:
             try:
                 reply = parse_frame(raw)
             except ProtocolError:
-                logger.debug("не HID++ кадр, пропускаем: %s", raw.hex())
+                logger.debug(t("не HID++ кадр, пропускаем: %s", "not a HID++ frame, skipping: %s"), raw.hex())
                 continue
             if reply.is_error:
                 raise DeviceError(feature_index, function, reply.error_code or 0)
             if reply.feature_index != feature_index or reply.function != expected_function:
                 # Нотификации мыши и трафик других клиентов (Solaar, Piper).
-                logger.debug("чужой кадр, пропускаем: %s", raw.hex())
+                logger.debug(t("чужой кадр, пропускаем: %s", "foreign frame, skipping: %s"), raw.hex())
                 continue
             return reply.params
-        raise ProtocolError("не удалось получить ответ на перечисление фич")
+        raise ProtocolError(t("не удалось получить ответ на перечисление фич", "failed to get a reply to feature enumeration"))
 
     # -- информационные операции ---------------------------------------
     def get_name(self) -> str:
@@ -376,7 +379,7 @@ class HidppDevice:
     def get_dpi(self, sensor: int = 0) -> int:
         reply = self.request(FeatureId.ADJUSTABLE_DPI, 0x20, sensor)
         if len(reply) < 5:
-            raise ProtocolError(f"короткий ответ DPI: {reply.hex()}")
+            raise ProtocolError(t(f"короткий ответ DPI: {reply.hex()}", f"short DPI reply: {reply.hex()}"))
         current = protocol.u16_be(reply, 1)
         default = protocol.u16_be(reply, 3)
         return current or default
@@ -391,7 +394,7 @@ class HidppDevice:
 
     def set_dpi(self, dpi: int, sensor: int = 0) -> None:
         if not 0 < dpi < 0xFFFF:
-            raise ValueError("DPI вне диапазона")
+            raise ValueError(t("DPI вне диапазона", "DPI is out of range"))
         self.request(FeatureId.ADJUSTABLE_DPI, 0x30, sensor, protocol.u16_bytes(dpi))
 
     # -- report rate ----------------------------------------------------
@@ -407,7 +410,7 @@ class HidppDevice:
     def set_rate_ms(self, milliseconds: int) -> None:
         rates = self.supported_rates_ms()
         if rates and milliseconds not in rates:
-            raise ValueError(f"частота {milliseconds} мс не поддерживается, доступны {rates}")
+            raise ValueError(t(f"частота {milliseconds} мс не поддерживается, доступны {rates}", f"rate {milliseconds} ms is not supported, available: {rates}"))
         self.request(FeatureId.REPORT_RATE, 0x20, milliseconds)
 
     # -- режим onboard --------------------------------------------------
@@ -480,9 +483,10 @@ class HidppDevice:
             zone_info = self.lighting_zone(zone)
             used_slot = next((item.slot for item in zone_info.effects if item.effect_id == effect_id), None)
             if used_slot is None:
-                known = ", ".join(f"{item.effect_id:#04x}" for item in zone_info.effects) or "нет"
+                known = ", ".join(f"{item.effect_id:#04x}" for item in zone_info.effects) or t("нет", "none")
                 raise ProtocolError(
-                    f"эффект {effect_id:#04x} недоступен у зоны {zone} (доступны: {known})"
+                    t(f"эффект {effect_id:#04x} недоступен у зоны {zone} (доступны: {known})",
+                    f"effect {effect_id:#04x} is unavailable for zone {zone} (available: {known})")
                 )
 
         payload = _lighting_effect_bytes(used_slot, effect_id, params)
@@ -499,7 +503,7 @@ class HidppDevice:
         try:
             info.protocol_version = self.ping()
         except (TimeoutError, ProtocolError, TransportError) as exc:
-            logger.debug("ping не удался: %s", exc)
+            logger.debug(t("ping не удался: %s", "ping failed: %s"), exc)
         info.name = self.get_name()
         info.kind = self.get_kind()
         info.firmware = self.get_firmware()

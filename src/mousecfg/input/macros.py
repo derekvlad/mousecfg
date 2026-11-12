@@ -14,6 +14,8 @@ from typing import Any
 
 from evdev import ecodes
 
+from mousecfg.i18n import t
+
 from .actions import ActionError, _resolve_key
 from .emitter import Emitter
 
@@ -33,8 +35,8 @@ class Step:
         if self.description:
             return self.description
         names = [ecodes.KEY.get(code, str(code)) for code in self.keys]
-        text = "->".join(names) if names else "(пауза)"
-        return f"{text} ({self.delay_ms} мс)" if self.delay_ms else text
+        text = "->".join(names) if names else t("(пауза)", "(pause)")
+        return t(f"{text} ({self.delay_ms} мс)", f"{text} ({self.delay_ms} ms)") if self.delay_ms else text
 
 
 @dataclass
@@ -50,11 +52,11 @@ class Macro:
 
 def _parse_step(raw: Any) -> Step:
     if not isinstance(raw, dict):
-        raise ActionError(f"шаг макроса должен быть таблицей, получено {type(raw).__name__}")
+        raise ActionError(t(f"шаг макроса должен быть таблицей, получено {type(raw).__name__}", f"macro step must be a table, got {type(raw).__name__}"))
 
     delay = int(raw.get("delay_ms", raw.get("delay", 0)) or 0)
     if delay < 0 or delay > MAX_TOTAL_DELAY_MS:
-        raise ActionError(f"задержка {delay} мс вне допустимого диапазона")
+        raise ActionError(t(f"задержка {delay} мс вне допустимого диапазона", f"delay {delay} ms is out of range"))
 
     if "key" in raw:
         codes = tuple(_resolve_key(token) for token in str(raw["key"]).replace("+", " ").split() if token)
@@ -65,21 +67,21 @@ def _parse_step(raw: Any) -> Step:
         return Step(keys=codes, delay_ms=delay, description=str(raw.get("note", "")))
 
     if "wait" in raw or "delay" in raw:
-        return Step(keys=(), delay_ms=delay, description=str(raw.get("note", "")) or f"пауза {delay} мс")
+        return Step(keys=(), delay_ms=delay, description=str(raw.get("note", "")) or t(f"пауза {delay} мс", f"pause {delay} ms"))
 
-    raise ActionError(f"в шаге макроса нет 'key', 'tap' или 'wait': {raw!r}")
+    raise ActionError(t(f"в шаге макроса нет 'key', 'tap' или 'wait': {raw!r}", f"macro step has no 'key', 'tap' or 'wait': {raw!r}"))
 
 
 def parse_macros(raw_list: list[dict]) -> dict[str, Macro]:
     macros: dict[str, Macro] = {}
     for raw in raw_list:
         if "id" not in raw:
-            raise ActionError(f"у макроса нет id: {raw!r}")
+            raise ActionError(t(f"у макроса нет id: {raw!r}", f"macro has no id: {raw!r}"))
         steps = [_parse_step(item) for item in raw.get("steps", [])]
         if not steps:
-            raise ActionError(f"макрос {raw['id']!r} без шагов")
+            raise ActionError(t(f"макрос {raw['id']!r} без шагов", f"macro {raw['id']!r} has no steps"))
         if len(steps) > MAX_STEPS:
-            raise ActionError(f"макрос {raw['id']!r}: больше {MAX_STEPS} шагов не поддерживается")
+            raise ActionError(t(f"макрос {raw['id']!r}: больше {MAX_STEPS} шагов не поддерживается", f"macro {raw['id']!r}: more than {MAX_STEPS} steps are not supported"))
         macro = Macro(
             id=str(raw["id"]),
             name=str(raw.get("name", "")),
@@ -131,7 +133,7 @@ class MacroRunner:
             thread.join(timeout=timeout)
 
     def _execute(self, macro: Macro) -> None:
-        logger.debug("макрос %s: %s", macro.id, macro.describe())
+        logger.debug(t("макрос %s: %s", "macro %s: %s"), macro.id, macro.describe())
         try:
             for step in macro.steps:
                 if self._stop.is_set():

@@ -12,6 +12,8 @@ import logging
 import evdev
 from evdev import ecodes
 
+from mousecfg.i18n import t
+
 logger = logging.getLogger(__name__)
 
 VIRTUAL_NAME = "mousecfg virtual input"
@@ -45,7 +47,7 @@ class Emitter:
         events = {ecodes.EV_REL: [ecodes.REL_X, ecodes.REL_Y, ecodes.REL_WHEEL, ecodes.REL_HWHEEL]}
         events[ecodes.EV_KEY] = list(BUTTON_CAPABILITIES) + list(KEY_CAPABILITIES)
         self._ui = evdev.UInput(events, name=VIRTUAL_NAME, version=1)
-        logger.debug("виртуальное устройство %s создано", VIRTUAL_NAME)
+        logger.debug(t("виртуальное устройство %s создано", "virtual device %s created"), VIRTUAL_NAME)
 
     def close(self) -> None:
         if self._ui is not None:
@@ -62,7 +64,7 @@ class Emitter:
     # -- отправка -------------------------------------------------------
     def write(self, etype: int, code: int, value: int) -> None:
         if self._dry_run or self._ui is None:
-            logger.info("[dry-run] событие %s %s %s", ecodes.EV.get(etype, etype), code, value)
+            logger.info(t("[dry-run] событие %s %s %s", "[dry-run] event %s %s %s"), ecodes.EV.get(etype, etype), code, value)
             return
         self._ui.write(etype, code, value)
         self._ui.syn()

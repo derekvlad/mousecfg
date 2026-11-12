@@ -12,6 +12,8 @@ from typing import Any
 
 from evdev import ecodes
 
+from mousecfg.i18n import t
+
 # Имена кнопок мыши в evdev. Используется и для ремапа, и для отчётов.
 MOUSE_BUTTONS: dict[str, tuple[int, ...]] = {
     "left": (ecodes.BTN_LEFT,),
@@ -48,11 +50,11 @@ class Action:
 
     def describe(self) -> str:
         if self.kind is ActionKind.PASSTHROUGH:
-            return "как есть"
+            return t("как есть", "as is")
         if self.kind is ActionKind.IGNORE:
-            return "ничего"
+            return t("ничего", "nothing")
         if self.kind is ActionKind.MACRO:
-            return f"макрос {self.macro}"
+            return t(f"макрос {self.macro}", f"macro {self.macro}")
         return "+".join(ecodes.KEY[code] if code in ecodes.KEY else str(code) for code in self.keys)
 
 
@@ -70,7 +72,7 @@ def button_code(name: str) -> int:
     codes = MOUSE_BUTTONS.get(key)
     if not codes:
         known = ", ".join(sorted(MOUSE_BUTTONS))
-        raise ActionError(f"неизвестная кнопка {name!r}; известные: {known}")
+        raise ActionError(t(f"неизвестная кнопка {name!r}; известные: {known}", f"unknown button {name!r}; known: {known}"))
     return codes[0]
 
 
@@ -192,13 +194,13 @@ def code_to_token(code: int) -> str:
 def _resolve_key(token: str) -> int:
     token = token.strip()
     if not token:
-        raise ActionError("пустое имя клавиши")
+        raise ActionError(t("пустое имя клавиши", "empty key name"))
 
     upper = token.upper()
     if upper.startswith("KEY_"):
         code = ecodes.ecodes.get(upper)
         if code is None:
-            raise ActionError(f"неизвестная клавиша {token!r}")
+            raise ActionError(t(f"неизвестная клавиша {token!r}", f"unknown key {token!r}"))
         return code
 
     if len(token) == 1:
@@ -217,14 +219,14 @@ def _resolve_key(token: str) -> int:
     if lowered in named:
         return ecodes.ecodes[named[lowered]]
 
-    raise ActionError(f"неизвестная клавиша {token!r}")
+    raise ActionError(t(f"неизвестная клавиша {token!r}", f"unknown key {token!r}"))
 
 
 def parse_keys(spec: str) -> tuple[int, ...]:
     """Превратить 'ctrl+shift+t' в кортеж кодов evdev в порядке нажатия."""
     tokens = [part for part in spec.replace("+", " ").split() if part]
     if not tokens:
-        raise ActionError(f"пустая комбинация {spec!r}")
+        raise ActionError(t(f"пустая комбинация {spec!r}", f"empty key combination {spec!r}"))
 
     if len(tokens) == 1 and tokens[0].lower() in KEY_ALIASES:
         codes: list[int] = []
@@ -244,10 +246,10 @@ def parse_action(spec: Any) -> Action:
             return Action(ActionKind.KEYS, keys=parse_keys(str(spec["key"])), source=str(spec))
         if "action" in spec:
             return parse_action(spec["action"])
-        raise ActionError(f"непонятное действие: {spec!r}")
+        raise ActionError(t(f"непонятное действие: {spec!r}", f"unknown action: {spec!r}"))
 
     if not isinstance(spec, str):
-        raise ActionError(f"действие должно быть строкой или таблицей, получено {type(spec).__name__}")
+        raise ActionError(t(f"действие должно быть строкой или таблицей, получено {type(spec).__name__}", f"action must be a string or a table, got {type(spec).__name__}"))
 
     text = spec.strip()
     lowered = text.lower()

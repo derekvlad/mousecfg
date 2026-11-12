@@ -22,6 +22,8 @@ from pathlib import Path
 
 import gi
 
+from mousecfg.i18n import t
+
 gi.require_version("Gtk", "3.0")
 gi.require_version("AppIndicator3", "0.1")
 
@@ -67,7 +69,10 @@ def reexec_in_scope(argv: list[str]) -> None:
         return
     systemd_run = shutil.which("systemd-run")
     if systemd_run is None or not os.environ.get("XDG_RUNTIME_DIR"):
-        logger.debug("systemd-run недоступен: хоткеи портала, вероятно, не заработают")
+        logger.debug(t(
+            "systemd-run недоступен: хоткеи портала, вероятно, не заработают",
+            "systemd-run is unavailable: portal shortcuts will probably not work",
+        ))
         return
     command = [
         systemd_run,
@@ -81,7 +86,7 @@ def reexec_in_scope(argv: list[str]) -> None:
         "mousecfg.tray",
         *argv,
     ]
-    logger.info("перезапуск в scope %s", SCOPE_UNIT)
+    logger.info(t("перезапуск в scope %s", "restarting in scope %s"), SCOPE_UNIT)
     os.execv(systemd_run, command)
 
 
@@ -111,34 +116,34 @@ class Tray:
         self.header_item.set_sensitive(False)
         menu.append(self.header_item)
 
-        self.device_item = Gtk.MenuItem(label="устройство: —")
+        self.device_item = Gtk.MenuItem(label=t("устройство: —", "device: —"))
         self.device_item.set_sensitive(False)
         menu.append(self.device_item)
 
         menu.append(Gtk.SeparatorMenuItem())
 
-        self.profile_section = Gtk.MenuItem(label="Профиль")
+        self.profile_section = Gtk.MenuItem(label=t("Профиль", "Profile"))
         self.profile_menu = Gtk.Menu()
         self.profile_section.set_submenu(self.profile_menu)
         menu.append(self.profile_section)
 
-        next_item = Gtk.MenuItem(label="Следующий профиль")
+        next_item = Gtk.MenuItem(label=t("Следующий профиль", "Next profile"))
         next_item.connect("activate", lambda *_: self._call("profile-next"))
         menu.append(next_item)
 
         menu.append(Gtk.SeparatorMenuItem())
 
-        self.remap_item = Gtk.MenuItem(label="Кнопки: выключены")
+        self.remap_item = Gtk.MenuItem(label=t("Кнопки: выключены", "Buttons: disabled"))
         self.remap_item.connect("activate", lambda *_: self._toggle_remap())
         menu.append(self.remap_item)
 
-        gui_item = Gtk.MenuItem(label="Открыть окно")
+        gui_item = Gtk.MenuItem(label=t("Открыть окно", "Open window"))
         gui_item.connect("activate", lambda *_: self._open_gui())
         menu.append(gui_item)
 
         menu.append(Gtk.SeparatorMenuItem())
 
-        quit_item = Gtk.MenuItem(label="Выход")
+        quit_item = Gtk.MenuItem(label=t("Выход", "Quit"))
         # В GTK3 у MenuItem сигнал "activate", а не "clicked".
         quit_item.connect("activate", lambda *_: self._quit())
         menu.append(quit_item)
@@ -160,7 +165,7 @@ class Tray:
 
     def _apply_status(self, status: object) -> bool:
         if not isinstance(status, dict) or not status.get("devices"):
-            self.header_item.set_label("mousecfg — демон недоступен")
+            self.header_item.set_label(t("mousecfg — демон недоступен", "mousecfg — daemon unavailable"))
             self._set_profile_items([])
             return False
 
@@ -171,7 +176,7 @@ class Tray:
         active = str(device.get("active_profile") or "—")
         self.header_item.set_label(f"mousecfg: {active}")
         self.device_item.set_label(str(device.get("name") or device.get("key") or "—"))
-        self.remap_item.set_label(f"Кнопки: {'включены' if self.remap_enabled else 'выключены'}")
+        self.remap_item.set_label(t(f"Кнопки: {'включены' if self.remap_enabled else 'выключены'}", f"Buttons: {'enabled' if self.remap_enabled else 'disabled'}"))
         self._set_profile_items(list(device.get("profiles") or []), active=active)
         return False
 
@@ -179,7 +184,7 @@ class Tray:
         for child in self.profile_menu.get_children():
             self.profile_menu.remove(child)
         if not profile_ids:
-            empty = Gtk.MenuItem(label="профилей нет")
+            empty = Gtk.MenuItem(label=t("профилей нет", "no profiles"))
             empty.set_sensitive(False)
             self.profile_menu.append(empty)
         for profile_id in profile_ids:
@@ -235,9 +240,11 @@ class Tray:
         """
         if not hotkeys.portal_supported():
             logger.info(
-                "портал GlobalShortcuts не поддерживается на %s: хоткеи вешаются в конфиге "
+                t("портал GlobalShortcuts не поддерживается на %s: хоткеи вешаются в конфиге "
                 "композитора (mousecfg keybinds)",
-                hotkeys.current_compositor() or "этом рабочем столе",
+                "the GlobalShortcuts portal is not supported on %s: shortcuts are set in the "
+                "compositor config (mousecfg keybinds)"),
+                hotkeys.current_compositor() or t("этом рабочем столе", "this desktop"),
             )
             return
         self._shortcuts = hotkeys.GlobalShortcuts(
@@ -246,7 +253,7 @@ class Tray:
         try:
             self._shortcuts.start()
         except hotkeys.ShortcutError as exc:
-            logger.warning("хоткеи недоступны: %s", exc)
+            logger.warning(t("хоткеи недоступны: %s", "shortcuts are unavailable: %s"), exc)
             self._shortcuts = None
 
     def _on_shortcut(self, shortcut_id: str) -> None:
@@ -255,7 +262,7 @@ class Tray:
         elif shortcut_id == "prev-profile":
             self._call("profile-prev")
         else:
-            logger.debug("неизвестный хоткей %s", shortcut_id)
+            logger.debug(t("неизвестный хоткей %s", "unknown shortcut %s"), shortcut_id)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -273,7 +280,7 @@ def main(argv: list[str] | None = None) -> int:
         reexec_in_scope(args)
 
     if not ipc.Client().is_available():
-        print("mousecfg: демон не запущен, трей всё равно будет ждать его.", file=sys.stderr)
+        print(t("mousecfg: демон не запущен, трей всё равно будет ждать его.", "mousecfg: the daemon is not running; the tray will wait for it anyway."), file=sys.stderr)
 
     tray = Tray()
     if not no_shortcuts:
