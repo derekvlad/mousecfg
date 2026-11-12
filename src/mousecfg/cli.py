@@ -9,7 +9,7 @@ import logging
 import sys
 from pathlib import Path
 
-from . import __version__, config, discovery, engine, ipc, profiles, session
+from . import __version__, config, consent, discovery, engine, ipc, profiles, session
 from . import daemon as daemon_module
 from .hidpp import guard
 from .hidpp.protocol import DeviceError, FeatureUnsupportedError, ProtocolError, TransportError
@@ -157,6 +157,11 @@ def _build_parser() -> argparse.ArgumentParser:
     daemon.add_argument("--profiles-dir", default=None)
     daemon.add_argument("--no-buttons", action="store_true")
     daemon.add_argument("--no-apps", action="store_true")
+    daemon.add_argument(
+        "--no-auto-host",
+        action="store_true",
+        help="не повторять переход On-Board → Host автоматически (даже если согласие сохранено)",
+    )
 
     run_profile = sub.add_parser("run-profile", parents=[common], help="включить ремап кнопок профиля (без демона)")
     run_profile.add_argument("path", help="файл .toml с профилями")
@@ -328,9 +333,6 @@ def cmd_mode(args: argparse.Namespace) -> int:
             return 0
 
         if args.value == "host":
-            if current == "host":
-                _dump({"mode": current, "changed": False}, args.json)
-                return 0
             if not args.allow_onboard_switch:
                 print(
                     "Переход On-Board -> Host меняет конфигурацию устройства.\n"
@@ -339,6 +341,18 @@ def cmd_mode(args: argparse.Namespace) -> int:
                     file=sys.stderr,
                 )
                 return 2
+
+            # Согласие запоминаем, как только оно выражено, — даже если мышь
+            # уже в Host: иначе при следующей перезагрузке (когда прошивка
+            # вернёт On-Board) демону нечего будет повторить. Согласие дано
+            # явно и на конкретное устройство.
+            if not args.dry_run:
+                consent.record(consent.key_for_node(opened.node))
+
+            if current == "host":
+                _dump({"mode": current, "changed": False, "consent": "запомнено"}, args.json)
+                return 0
+
             device.set_host_mode()
             if args.dry_run:
                 _dump(
@@ -1085,6 +1099,7 @@ def cmd_daemon(args: argparse.Namespace) -> int:
         profiles_dir=Path(args.profiles_dir).expanduser() if args.profiles_dir else config.profiles_dir(),
         watch_apps=not args.no_apps,
         apply_buttons=not args.no_buttons,
+        auto_host=not args.no_auto_host,
     )
     return daemon_module.Daemon(daemon_options).run()
 

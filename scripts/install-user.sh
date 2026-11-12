@@ -40,8 +40,6 @@ run_cmd() {
 run_cmd mkdir -p "${apps_dir}" "${autostart_dir}" "${icons_dir}" "${units_dir}" "${bin_dir}"
 
 run_cmd install -m 0644 "${data}/io.github.mousecfg.MouseCfg.desktop" "${apps_dir}/"
-# Трей кладём и в autostart: он поднимает иконку в панели и хоткеи смены профиля.
-run_cmd install -m 0644 "${data}/io.github.mousecfg.MouseCfg-tray.desktop" "${autostart_dir}/"
 run_cmd install -m 0644 "${data}/icons/hicolor/scalable/apps/io.github.mousecfg.MouseCfg.svg" "${icons_dir}/"
 
 # Юнит: подставляем абсолютный путь к entry point этого venv. systemd --user
@@ -67,6 +65,32 @@ if [ -x "${here}/.venv/bin/mousecfg" ]; then
     run_cmd ln -sf "${here}/.venv/bin/mousecfg-gui" "${bin_dir}/mousecfg-gui"
     run_cmd ln -sf "${here}/.venv/bin/mousecfg-tray" "${bin_dir}/mousecfg-tray"
     [ "$quiet" -eq 1 ] || echo "симлинки команд: ${bin_dir}"
+fi
+
+# Трей кладём в autostart: он поднимает иконку в панели и хоткеи смены профиля.
+#
+# ВАЖНО: systemd-генератор XDG-autostart молча отбрасывает .desktop, если
+# исполняемый файл из Exec= не найден в PATH менеджера systemd, — а
+# ~/.local/bin туда не входит. С `Exec=mousecfg-tray` трей тогда вообще не
+# запускается (юнит не генерируется). Поэтому подставляем абсолютный путь:
+# сначала entry point venv, затем симлинк из ~/.local/bin, затем PATH.
+tray_bin=""
+for candidate in "${venv}/bin/mousecfg-tray" "${bin_dir}/mousecfg-tray"; do
+    if [ -x "${candidate}" ]; then
+        tray_bin="${candidate}"
+        break
+    fi
+done
+if [ -z "${tray_bin}" ]; then
+    tray_bin=$(command -v mousecfg-tray 2>/dev/null || printf '%s' "mousecfg-tray")
+fi
+if [ "$dry_run" -eq 1 ]; then
+    echo "    [dry-run] записать ${autostart_dir}/io.github.mousecfg.MouseCfg-tray.desktop с Exec=${tray_bin}"
+else
+    sed "s#^Exec=mousecfg-tray\$#Exec=${tray_bin}#" \
+        "${data}/io.github.mousecfg.MouseCfg-tray.desktop" \
+        > "${autostart_dir}/io.github.mousecfg.MouseCfg-tray.desktop"
+    chmod 0644 "${autostart_dir}/io.github.mousecfg.MouseCfg-tray.desktop"
 fi
 
 if [ "$dry_run" -eq 0 ]; then

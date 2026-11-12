@@ -14,7 +14,7 @@ import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
-from . import appwatch, config, engine, ipc, profiles, registry, session
+from . import appwatch, config, consent, engine, ipc, profiles, registry, session
 from .hidpp.protocol import ProtocolError, TransportError
 from .input.actions import ActionError, parse_action
 from .input.detect import InputDeviceInfo, find_pointer_devices
@@ -74,6 +74,10 @@ class DaemonConfig:
     profiles_dir: Path = field(default_factory=config.profiles_dir)
     watch_apps: bool = True
     apply_buttons: bool = True
+    # Автоматически повторять переход On-Board → Host при подключении мыши,
+    # если пользователь уже давал на это явное согласие
+    # (`mousecfg mode host --allow-onboard-switch` запоминает его в consent.json).
+    auto_host: bool = True
 
 
 class Daemon:
@@ -161,11 +165,42 @@ class Daemon:
                 continue
             self._start_remap(runtime)
 
+    def _allow_switch_for(self, key: str) -> bool:
+        """Разрешён ли переход On-Board → Host для этого устройства.
+
+        Либо демон запущен с `--allow-onboard-switch` (согласие на текущий
+        запуск), либо пользователь уже давал согласие ранее и оно запомнено.
+        """
+        if self.options.allow_onboard_switch:
+            return True
+        if not self.options.auto_host:
+            return False
+        return consent.granted(key)
+
+    def _switch_to_host(self, device: object, *, name: str) -> str:
+        """Повторить переход On-Board → Host по ранее данному согласию.
+
+        Возвращает фактический режим устройства после попытки. Ошибка не
+        фатальна: мышь останется в On-Board, и об этом будет предупреждение.
+        """
+        try:
+            device.set_host_mode()
+            new_mode = device.get_mode()
+        except (TransportError, ProtocolError, TimeoutError, OSError) as exc:
+            logger.warning("%s: не удалось перейти в Host mode: %s", name, exc)
+            return "onboard"
+        if new_mode == "host":
+            logger.info(
+                "%s: автоматический переход On-Board → Host по ранее данному согласию",
+                name,
+            )
+        return new_mode
+
     def _attach(self, node: session.discovery.HidrawNode, key: str) -> None:
         try:
             opened = session.open_device(
                 node.path,
-                allow_onboard_switch=self.options.allow_onboard_switch,
+                allow_onboard_switch=self._allow_switch_for(key),
                 dry_run=self.options.dry_run,
             )
         except Exception as exc:  # noqa: BLE001
@@ -179,6 +214,13 @@ class Daemon:
             logger.warning("не удалось прочитать %s: %s", node.path, exc)
             opened.close()
             return
+
+        # Прошивка не всегда помнит Host mode между сессиями (G102, например,
+        # возвращается в On-Board после перезагрузки). Если пользователь уже
+        # раз давал согласие на переход, повторяем его здесь — иначе настройки
+        # с хоста будут игнорироваться до ручного `mousecfg mode host`.
+        if mode == "onboard" and self._allow_switch_for(key):
+            mode = self._switch_to_host(opened.device, name=info.name or node.name)
 
         dpi = None
         rate_ms = None
@@ -265,7 +307,7 @@ class Daemon:
         try:
             with session.open_device(
                 runtime.state.path,
-                allow_onboard_switch=self.options.allow_onboard_switch,
+                allow_onboard_switch=self._allow_switch_for(runtime.key),
                 dry_run=self.options.dry_run,
             ) as opened:
                 result = engine.apply_profile(opened.device, chosen)
@@ -525,7 +567,7 @@ class Daemon:
 
         with session.open_device(
             runtime.state.path,
-            allow_onboard_switch=self.options.allow_onboard_switch,
+            allow_onboard_switch=self._allow_switch_for(runtime.key),
             dry_run=self.options.dry_run,
         ) as opened:
             result = engine.apply_profile(opened.device, chosen)
@@ -552,7 +594,7 @@ class Daemon:
 
         with session.open_device(
             runtime.state.path,
-            allow_onboard_switch=self.options.allow_onboard_switch,
+            allow_onboard_switch=self._allow_switch_for(runtime.key),
             dry_run=self.options.dry_run,
         ) as opened:
             if what == "dpi":
@@ -616,7 +658,7 @@ class Daemon:
 
         with session.open_device(
             runtime.state.path,
-            allow_onboard_switch=self.options.allow_onboard_switch,
+            allow_onboard_switch=self._allow_switch_for(runtime.key),
             dry_run=self.options.dry_run,
         ) as opened:
             slot = opened.device.set_lighting(effect_id, device_params, zone=params_block["zone"])
@@ -634,7 +676,7 @@ class Daemon:
 
         with session.open_device(
             runtime.state.path,
-            allow_onboard_switch=self.options.allow_onboard_switch,
+            allow_onboard_switch=self._allow_switch_for(runtime.key),
             dry_run=self.options.dry_run,
         ) as opened:
             result = engine.apply_profile(opened.device, chosen)

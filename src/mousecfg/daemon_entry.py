@@ -21,6 +21,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--profiles-dir", default=None, help=f"каталог профилей (по умолчанию {config.profiles_dir()})")
     parser.add_argument("--no-buttons", action="store_true", help="не перехватывать кнопки (только DPI и rate)")
     parser.add_argument("--no-apps", action="store_true", help="не следить за активным приложением")
+    parser.add_argument(
+        "--no-auto-host",
+        action="store_true",
+        help="не повторять переход On-Board → Host автоматически (даже если согласие сохранено)",
+    )
     args = parser.parse_args(argv)
 
     level = logging.WARNING if args.verbose == 0 else logging.INFO if args.verbose == 1 else logging.DEBUG
@@ -32,6 +37,7 @@ def main(argv: list[str] | None = None) -> int:
         profiles_dir=(config.profiles_dir() if args.profiles_dir is None else __import__("pathlib").Path(args.profiles_dir)),
         watch_apps=not args.no_apps,
         apply_buttons=not args.no_buttons,
+        auto_host=not args.no_auto_host,
     )
     return Daemon(options).run()
 

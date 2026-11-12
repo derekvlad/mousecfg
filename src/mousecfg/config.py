@@ -49,5 +49,14 @@ def journal_file() -> Path:
     return state_dir() / "hid.log"
 
 
+def consent_file() -> Path:
+    """Сохранённое согласие на однократный переход On-Board → Host.
+
+    Хранится отдельно от `state.json`, который постоянно пишет демон: иначе
+    команда `mousecfg mode host` и демон писали бы в один файл.
+    """
+    return state_dir() / "host-consent.json"
+
+
 def socket_path() -> Path:
     return runtime_dir() / "daemon.sock"
