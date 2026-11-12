@@ -26,3 +26,5 @@ packaging/aur/**/src/
 packaging/aur/**/*.pkg.tar.*
 # Клон git-источника для mousecfg-git (имя совпадает с pkgname)
 packaging/aur/mousecfg-git/mousecfg-git/
+# Архив релиза, который скачивает updpkgsums рядом с PKGBUILD
+packaging/aur/**/mousecfg-*.tar.gz

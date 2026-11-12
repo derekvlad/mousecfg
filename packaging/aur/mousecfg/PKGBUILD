@@ -21,8 +21,9 @@ makedepends=('python-build' 'python-installer' 'python-setuptools' 'python-wheel
 conflicts=('mousecfg-git')
 install="${pkgname}.install"
 source=("${pkgname}-${pkgver}.tar.gz::${url}/archive/refs/tags/v${pkgver}.tar.gz")
-# ЗАМЕНИТЬ после проставления тега (или запустить updpkgsums).
-sha256sums=('SKIP')
+# Сумма архива тега v$pkgver. Пересчитать после выпуска новой версии:
+#   updpkgsums
+sha256sums=('c97ef539fec2637022fdb50a8ac0600d086ef70eb3814ac20f71bece285a72a5')
 
 build() {
     cd "${pkgname}-${pkgver}"
