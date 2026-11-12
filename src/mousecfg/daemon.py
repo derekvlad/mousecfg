@@ -26,6 +26,9 @@ logger = logging.getLogger(__name__)
 # Раз в секунду смотрим, не сменилось ли активное приложение.
 FOCUS_POLL_SECONDS = 0.5
 RECONNECT_SECONDS = 1.0
+# Если event-узел мыши не нашёлся при подключении (ACL появился позже, узел
+# ещё не создан), пробуем поднять ремап заново с этой периодичностью.
+REMAP_RETRY_SECONDS = 5.0
 
 
 @dataclass
@@ -44,6 +47,9 @@ class DeviceRuntime:
     # Пользователь выключил ремап через трей: тогда смена профиля не поднимает
     # перехват заново, пока его не включат обратно.
     remap_disabled: bool = False
+    # Время последней попытки поднять ремап, когда event-узел не нашёлся
+    # (ACL или сам узел появляются чуть позже запуска демона).
+    remap_retry_at: float = 0.0
     last_error: str = ""
 
     @property
@@ -131,6 +137,29 @@ class Daemon:
 
         if self.watcher is not None and self.options.watch_apps:
             self._check_focus()
+
+        if self.options.apply_buttons:
+            self._retry_pending_remaps()
+
+    def _retry_pending_remaps(self) -> None:
+        """Повторно поднять ремап там, где event-узел не нашёлся сразу.
+
+        При старте демона вместе с графической сессией ACL на
+        `/dev/input/event*` может появиться позже (logind шлёт change-события
+        уже после запуска сервиса). Без повтора мышь осталась бы без кнопок
+        и макросов до переподключения.
+        """
+        now = time.monotonic()
+        for runtime in list(self.devices.values()):
+            if runtime.profile_set is None:
+                continue
+            if runtime.remapper is not None or runtime.remap_disabled:
+                continue
+            if runtime.input_info is not None:
+                continue
+            if now < runtime.remap_retry_at:
+                continue
+            self._start_remap(runtime)
 
     def _attach(self, node: session.discovery.HidrawNode, key: str) -> None:
         try:
@@ -270,12 +299,23 @@ class Daemon:
         try:
             info = self._find_input(runtime)
         except LookupError as exc:
-            runtime.last_error = str(exc)
-            logger.warning("%s: %s", runtime.state.name, exc)
+            message = str(exc)
+            # Повторяем попытку, но не засоряем журнал: одно и то же
+            # сообщение пишем один раз, дальше — только в debug.
+            if runtime.last_error != message:
+                logger.warning("%s: %s", runtime.state.name, message)
+            else:
+                logger.debug("%s: %s", runtime.state.name, message)
+            runtime.last_error = message
+            runtime.remap_retry_at = time.monotonic() + REMAP_RETRY_SECONDS
             return
 
         runtime.input_info = info
         runtime.state.input_path = info.path
+        runtime.remap_retry_at = 0.0
+        # Узел нашёлся — прошлая ошибка про права больше не актуальна.
+        if runtime.last_error and "event-узел" in runtime.last_error:
+            runtime.last_error = ""
         registry.save_state(self.state)
 
         chosen = runtime.active_profile or profiles.choose(

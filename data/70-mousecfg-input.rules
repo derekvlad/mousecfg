@@ -13,5 +13,15 @@
 #
 # Если правило по какой-то причине неприменимо, добавьте пользователя в
 # группу input: sudo usermod -aG input $USER (потребуется перелогин).
+#
+# ВАЖНО: условие ACTION!="remove", а не ACTION=="add". С systemd v258 ACL по
+# тегу uaccess навешивает systemd-udevd, а logind лишь шлёт change-события.
+# Поэтому тег должен ставиться и на add, и на change. С ACTION=="add" тег
+# выставляется только при появлении устройства, а на последующих change-
+# событиях (активация сессии, `udevadm trigger`) правило не совпадает и тег в
+# текущих не оказывается — 73-seat-late.rules не запускает builtin uaccess, и
+# ACL на /dev/input/eventN не появляется (кнопки и макросы не работают). Те же
+# правила для hidraw (60-mousecfg.rules) работают именно потому, что не
+# ограничены add.
 
-ACTION=="add", SUBSYSTEM=="input", KERNEL=="event*", ENV{ID_INPUT_MOUSE}=="1", TAG+="uaccess"
+ACTION!="remove", SUBSYSTEM=="input", KERNEL=="event*", ENV{ID_INPUT_MOUSE}=="1", TAG+="uaccess"

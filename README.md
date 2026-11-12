@@ -129,6 +129,25 @@ sudo udevadm trigger --subsystem-match=input
 не нужен: он работает
 в пользовательской сессии.
 
+Проверить, что ACL появился:
+
+```sh
+getfacl /dev/input/event*   # у узла мыши должен быть user:<вы>:rw-
+mousecfg inputs             # должны быть видны мышь и её кнопки
+```
+
+Если в ACL нет вашего пользователя (и `mousecfg inputs` пишет «нет прав»),
+правило не сработало. Частая причина — условие `ACTION=="add"` вместо
+`ACTION!="remove"`: на systemd ≥ v258 ACL навешивает `systemd-udevd` по
+`change`-событиям, поэтому правило обязано совпадать и на `change`. В этом
+репозитории все правила уже такие; если вы ставили более раннюю версию,
+переустановите правила и перезапустите udev:
+
+```sh
+sudo install -m 0644 data/70-mousecfg-input.rules /etc/udev/rules.d/
+sudo udevadm control --reload && sudo udevadm trigger --subsystem-match=input
+```
+
 Автозапуск демона (проще — через `sh scripts/install-user.sh`, он подставит
 путь сам; ниже — вручную):
 
