@@ -259,6 +259,7 @@ class MainWindow(Adw.ApplicationWindow):
 
         page = Adw.PreferencesPage()
         page.add(self.devices_group)
+        page.add(self.onboard_group)
         page.add(self.profiles_group)
         page.add(self.lighting_group)
         page.add(self.buttons_group)

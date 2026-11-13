@@ -55,3 +55,57 @@ def test_describe_binding_covers_all_shapes():
     assert _describe_binding({"macro": "b"}) == "макрос b"
     assert _describe_binding({"key": "ctrl+c"}) == "клавиши ctrl+c"
     assert _describe_binding("ignore") == "ignore"
+
+
+def test_onboard_group_is_added_to_the_page() -> None:
+    """Группа «Память мыши» должна быть на странице, а не только собрана.
+
+    Регрессия: группу создавали, но забыли `page.add(...)`, поэтому в окне
+    её не было видно.
+    """
+    import gi
+
+    gi.require_version("Adw", "1")
+    from gi.repository import Adw, Gtk
+
+    from mousecfg.gui.window import MainWindow
+
+    app = Adw.Application(application_id="io.github.mousecfg.TestOnboard")
+    if not Gtk.init_check():
+        pytest.skip("нет дисплея")
+    window = MainWindow(app)
+
+    assert window.onboard_group.get_visible() is False  # появляется только для vendor-мыши
+    # Группа действительно в дереве страницы, а не «висит» отдельно.
+    page = window.onboard_group.get_ancestor(Adw.PreferencesPage) or _find_page(window)
+    assert page is not None
+    assert window.onboard_group in [child for child in _all_groups(page)]
+
+
+def _find_page(root):
+    from gi.repository import Adw
+
+    stack = [root]
+    while stack:
+        widget = stack.pop()
+        if isinstance(widget, Adw.PreferencesPage):
+            return widget
+        child = widget.get_first_child() if hasattr(widget, "get_first_child") else None
+        while child is not None:
+            stack.append(child)
+            child = child.get_next_sibling()
+    return None
+
+
+def _all_groups(page) -> list:
+    groups = []
+    stack = [page]
+    while stack:
+        widget = stack.pop()
+        if type(widget).__name__ == "PreferencesGroup":
+            groups.append(widget)
+        child = widget.get_first_child() if hasattr(widget, "get_first_child") else None
+        while child is not None:
+            stack.append(child)
+            child = child.get_next_sibling()
+    return groups
