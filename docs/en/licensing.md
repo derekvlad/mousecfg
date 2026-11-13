@@ -25,9 +25,12 @@ from them, not code.
   short read, `0e` retry, `30` battery, `52` handshake) and the read area base
   `0x0ba5`.
 
+Additionally, the write frames were recovered from the minified JS of the AJAZZ
+web configurator itself (`ajazz.yjx2012.com/ajazz-2012a`) — as protocol facts
+(field offsets, byte values), without copying code.
+
 No code from those projects was copied: `src/mousecfg/vendor/` was written from
-scratch, and the read-only checks in `vendor/guard.py` are the project's own
-policy. The `yjx-sdk-mouse` package ships no licence, so it is used purely as a
+scratch, and the policy in `vendor/guard.py` is the project's own. The `yjx-sdk-mouse` package ships no licence, so it is used purely as a
 source of protocol facts.
 
 ## How the installed Solaar was used

@@ -111,3 +111,46 @@ def ensure_read(dialect: Dialect, cmd: int, sub: int = 0) -> str:
             "The vendor channel is read-only.",
         )
     )
+
+
+# --- запись в onboard-память: только по явному согласию -----------------
+#
+# Эти команды действительно меняют энергонезависимую память мыши. Проект
+# отправляет их только по явной команде (`mousecfg onboard ...`) и только
+# после того, как снят снимок. Ниже — узкий allowlist, который шире
+# read-only запрета ровно на то, что нужно для чтения и правки конфигурации.
+MKESPN_CONSENTED_WRITES: dict[int, str] = {
+    0x0F: "запись DPI / частоты / подсветки",
+    0x09: "запись раскладки кнопок",
+}
+
+
+class VendorWriteRefused(VendorRefused):
+    """Запись не прошла политику (нет согласия или команда вне allowlist)."""
+
+
+def ensure_onboard_write(cmd: int, sub: int) -> str:
+    """Пропустить write-команду во время явной операции записи.
+
+    Разрешены только команды, которыми правится конфигурация. Отдельно и
+    с особым текстом запрещена `0d/00`: с непустым телом она стирает
+    участок памяти, а не пишет запись.
+    """
+    purpose = MKESPN_CONSENTED_WRITES.get(cmd)
+    if purpose is not None:
+        return purpose
+    if cmd == 0x0D and sub == 0x00:
+        raise VendorWriteRefused(
+            t(
+                "команда 0d/00 с непустым телом стирает участок onboard-памяти. "
+                "Проект её не отправляет даже при разрешённой записи.",
+                "command 0d/00 with a non-empty body clears a range of onboard memory. "
+                "The project never sends it, even when writing is allowed.",
+            )
+        )
+    raise VendorWriteRefused(
+        t(
+            f"команда {cmd:02x}/{sub:02x} не входит в список разрешённых записей.",
+            f"command {cmd:02x}/{sub:02x} is not in the write allowlist.",
+        )
+    )

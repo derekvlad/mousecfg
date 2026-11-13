@@ -15,6 +15,12 @@ mouse non-volatile memory (onboard memory / "flash"). All settings are sent as
 volatile HID++ commands and are lost when the mouse is disconnected — the
 daemon applies them again on reconnect.
 
+The one exception is the explicit `mousecfg onboard` command: if the user
+decides to write settings into the mouse memory (for example, so that they
+live without the daemon), the project first saves a **snapshot** of the current
+state, shows a warning, and only then writes. Daemon profiles never touch the
+memory.
+
 ![mousecfg interface](docs/images/gui.png)
 
 ## Features
@@ -23,10 +29,14 @@ daemon applies them again on reconnect.
 - mice without HID++ (e.g. AJAZZ 2.4G): per-application profiles, button
   remapping and macros through evdev; DPI, report rate and lighting are set on
   the mouse itself. See what was found and what is available with `mousecfg list`;
-- the YJX vendor channel (AJAZZ 2.4G) is **read-only**: `mousecfg vendor`
-  shows the model, firmware build dates, the current DPI, report rate and
-  battery; `get` adds them to the mouse card, and the battery is shown in the
-  tray and in the window; writes in this channel are refused by policy;
+- the YJX vendor channel (AJAZZ 2.4G) is **read-only by default**: `mousecfg
+  vendor` shows the model, firmware build dates, DPI, report rate and battery;
+  `get` adds them to the mouse card, and the battery is shown in the tray and
+  in the window;
+- separate `mousecfg onboard` commands write settings into the mouse memory
+  (DPI, report rate, lighting, etc.) — only with `--allow-onboard-write`, with
+  a warning on first connect, and with a **mandatory snapshot** before every
+  write (`onboard backup`/`restore`);
 - a `systemd --user` daemon: it finds the mouse, applies a profile on connect
   and switches profiles based on the focused application;
 - TOML profiles: DPI, report rate, buttons, macros, matching by serial number
@@ -39,7 +49,8 @@ daemon applies them again on reconnect.
 
 What the project **never** does: write onboard profiles, reset the device,
 enable hidden features or update firmware. This is forbidden in
-`hidpp/guard.py` and enforced by tests.
+`hidpp/guard.py` and enforced by tests. The only exception is the manual
+`mousecfg onboard` commands, and only with `--allow-onboard-write`.
 
 The only persistent operation is a one-time `On-Board → Host` switch
 (`0x8100/0x10`). It is performed only with `--allow-onboard-switch`, because
@@ -216,6 +227,11 @@ mousecfg mode host --allow-onboard-switch   # one-time switch to Host mode
 mousecfg profiles-check       # validate TOML profiles
 mousecfg vendor               # the mouse vendor channel: read-only
 mousecfg vendor --probe       # raw replies of the read commands (no writes)
+
+mousecfg onboard show         # current settings in the mouse memory (read)
+mousecfg onboard backup       # snapshot into ~/.config/mousecfg/backups
+mousecfg onboard apply --dpi 1600 --rate 1000Hz --allow-onboard-write
+mousecfg onboard restore --allow-onboard-write   # restore the latest snapshot
 
 mousecfg status               # daemon state
 mousecfg devices              # devices managed by the daemon

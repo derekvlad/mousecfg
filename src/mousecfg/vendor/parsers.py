@@ -1,8 +1,9 @@
-"""Разбор читающих ответов вендорского канала YJX.
+"""Разбор ответов вендорского канала YJX.
 
-Только чтение: здесь нет ни одного кадра записи, а назначение полей взято из
-публичных описаний протокола и сверено с живым ответом мыши. Если поле
-распознать не удаётся, оно остаётся в сыром дампе, а не выдаётся за факт.
+Назначение полей взято из публичных описаний протокола и сверено с живым
+ответом мыши. Если поле распознать не удаётся, оно остаётся в сыром дампе, а
+не выдаётся за факт. Здесь же — объектная модель конфигурации
+(`OnboardConfig`), которой пользуется запись в память мыши.
 """
 
 from __future__ import annotations
@@ -167,10 +168,164 @@ def parse_session_state(reply: MkespnReply) -> SessionState:
     return SessionState(data=reply.data.hex(" "))
 
 
+# Размер конфигурации в кадре записи 0f/ae.
+CONFIG_SIZE = 0x30
+MAX_DPI_LEVELS = 6
+
+
+@dataclass
+class OnboardConfig:
+    """48-байтная конфигурация мыши: то, что читает `0e/a5` и пишет `0f/ae`.
+
+    Правится не «с нуля», а поверх живого чтения: неизвестные и служебные
+    байты остаются как есть (важно ещё и потому, что байт 46 меняется сам —
+    похоже на заряд, и затирать его нельзя).
+    """
+
+    buffer: bytearray
+
+    @classmethod
+    def from_bytes(cls, data: bytes) -> OnboardConfig:
+        buffer = bytearray(data[:CONFIG_SIZE])
+        if len(buffer) < CONFIG_SIZE:
+            buffer += bytes(CONFIG_SIZE - len(buffer))
+        return cls(buffer=buffer)
+
+    def to_bytes(self) -> bytes:
+        return bytes(self.buffer)
+
+    # -- свет, активный уровень, частота ---------------------------------
+    @property
+    def light_mode(self) -> int:
+        return self.buffer[1]
+
+    @light_mode.setter
+    def light_mode(self, value: int) -> None:
+        self.buffer[1] = value & 0xFF
+
+    @property
+    def report_rate_code(self) -> int:
+        """Код частоты (1..4), как в ответе. 0 — неизвестно."""
+        return self.buffer[2]
+
+    @report_rate_code.setter
+    def report_rate_code(self, value: int) -> None:
+        self.buffer[2] = value & 0xFF
+
+    @property
+    def dpi_count(self) -> int:
+        return min(self.buffer[3] or MAX_DPI_LEVELS, MAX_DPI_LEVELS)
+
+    @dpi_count.setter
+    def dpi_count(self, value: int) -> None:
+        self.buffer[3] = max(1, min(int(value), MAX_DPI_LEVELS))
+
+    @property
+    def dpi_index(self) -> int:
+        """Активный уровень, 0-based."""
+        return max(0, self.buffer[4] - 1) if self.buffer[4] else 0
+
+    @dpi_index.setter
+    def dpi_index(self, value: int) -> None:
+        self.buffer[4] = max(1, min(int(value) + 1, MAX_DPI_LEVELS))
+
+    # -- уровни DPI ------------------------------------------------------
+    @property
+    def dpi_levels(self) -> list[int]:
+        levels: list[int] = []
+        count = self.dpi_count if self.buffer[3] else MAX_DPI_LEVELS
+        for index in range(min(count, MAX_DPI_LEVELS)):
+            offset = 5 + index * 2
+            levels.append(self.buffer[offset] | (self.buffer[offset + 1] << 8))
+        return levels
+
+    def set_level(self, index: int, value: int) -> None:
+        """Установить уровень DPI по индексу (0-based), 100..30000."""
+        if not 0 <= index < MAX_DPI_LEVELS:
+            raise ValueError(f"DPI level index out of range: {index}")
+        if not 50 <= value <= 50000:
+            raise ValueError(f"DPI value out of range: {value}")
+        offset = 5 + index * 2
+        self.buffer[offset] = value & 0xFF
+        self.buffer[offset + 1] = (value >> 8) & 0xFF
+
+    # -- прочие поля, которые показывает инструмент ----------------------
+    @property
+    def scroll_flag(self) -> int:
+        return self.buffer[40]
+
+    @scroll_flag.setter
+    def scroll_flag(self, value: int) -> None:
+        self.buffer[40] = value & 0xFF
+
+    @property
+    def lod_value(self) -> int:
+        return self.buffer[41]
+
+    @lod_value.setter
+    def lod_value(self, value: int) -> None:
+        self.buffer[41] = value & 0xFF
+
+    @property
+    def sensor_flag(self) -> int:
+        return self.buffer[42]
+
+    @sensor_flag.setter
+    def sensor_flag(self, value: int) -> None:
+        self.buffer[42] = value & 0xFF
+
+    @property
+    def key_respond(self) -> int:
+        return self.buffer[43]
+
+    @key_respond.setter
+    def key_respond(self, value: int) -> None:
+        self.buffer[43] = value & 0xFF
+
+    @property
+    def sleep_light(self) -> int:
+        return self.buffer[44]
+
+    @sleep_light.setter
+    def sleep_light(self, value: int) -> None:
+        self.buffer[44] = value & 0xFF
+
+    @property
+    def highspeed_mode(self) -> int:
+        return self.buffer[45]
+
+    @highspeed_mode.setter
+    def highspeed_mode(self, value: int) -> None:
+        self.buffer[45] = value & 0xFF
+
+    def changes_against(self, other: OnboardConfig) -> list[str]:
+        """Какие поля отличаются — для сухого прогона и предупреждения."""
+        labels = {
+            1: "light_mode",
+            2: "report_rate",
+            3: "dpi_count",
+            4: "dpi_index",
+            40: "scroll_flag",
+            41: "lod_value",
+            42: "sensor_flag",
+            43: "key_respond",
+            44: "sleep_light",
+            45: "highspeed_mode",
+        }
+        changed: list[str] = []
+        for offset, name in labels.items():
+            if self.buffer[offset] != other.buffer[offset]:
+                changed.append(name)
+        if self.dpi_levels != other.dpi_levels:
+            changed.append("dpi_levels")
+        return changed
+
+
 __all__ = [
     "DpiConfig",
     "DeviceIdentification",
     "InfoBlock",
+    "OnboardConfig",
     "SessionState",
     "parse_dpi_config",
     "parse_identification",

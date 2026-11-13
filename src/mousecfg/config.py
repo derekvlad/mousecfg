@@ -49,6 +49,16 @@ def journal_file() -> Path:
     return state_dir() / "hid.log"
 
 
+def backups_dir() -> Path:
+    """Снимки onboard-конфигурации перед записью в память мыши."""
+    return config_dir() / "backups"
+
+
+def onboard_consent_file() -> Path:
+    """Согласие на запись в onboard-память (первое подключение)."""
+    return config_dir() / "onboard-consent.json"
+
+
 def consent_file() -> Path:
     """Сохранённое согласие на однократный переход On-Board → Host.
 

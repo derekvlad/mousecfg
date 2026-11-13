@@ -14,7 +14,7 @@ import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
-from . import appwatch, config, consent, discovery, engine, ipc, profiles, registry, session
+from . import appwatch, config, consent, discovery, engine, ipc, onboard_consent, profiles, registry, session
 from .hidpp.protocol import ProtocolError, TransportError
 from .i18n import t
 from .input.actions import ActionError, parse_action
@@ -371,6 +371,18 @@ class Daemon:
             ),
             state.name,
         )
+        if mouse.vendor_path and not onboard_consent.granted(key):
+            logger.warning(
+                t(
+                    "%s: у мыши есть вендорский канал. Чтение безопасно (mousecfg vendor); "
+                    "запись в память мыши — только вручную: mousecfg onboard apply ... "
+                    "--allow-onboard-write (перед записью снимается снимок).",
+                    "%s: this mouse has a vendor channel. Reading is safe (mousecfg vendor); "
+                    "writing to the mouse memory is manual only: mousecfg onboard apply ... "
+                    "--allow-onboard-write (a snapshot is taken before every write).",
+                ),
+                state.name,
+            )
 
         self._apply(runtime, reason="подключение")
         if self.options.apply_buttons:

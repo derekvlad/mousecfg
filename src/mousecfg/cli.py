@@ -9,14 +9,16 @@ import logging
 import sys
 from pathlib import Path
 
-from . import __version__, config, consent, discovery, engine, ipc, profiles, session
+from . import __version__, config, consent, discovery, engine, ipc, onboard_consent, profiles, session
 from . import daemon as daemon_module
 from .hidpp import guard
 from .hidpp.protocol import DeviceError, FeatureUnsupportedError, ProtocolError, TransportError
 from .i18n import t
 from .input import detect as input_detect
+from .vendor import framing, snapshot
 from .vendor import guard as vendor_guard
 from .vendor.guard import VendorRefused
+from .vendor.parsers import OnboardConfig
 
 LOG = logging.getLogger("mousecfg")
 
@@ -91,6 +93,37 @@ def _build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help=t("снять сырые дампы читающих команд", "dump the raw replies of the read commands"),
     )
+
+    onboard = sub.add_parser(
+        "onboard",
+        parents=[common],
+        help=t(
+            "настройки в памяти мыши: снимок, просмотр, запись (только с согласия)",
+            "onboard-memory settings: snapshot, show, write (consent required)",
+        ),
+    )
+    onboard_sub = onboard.add_subparsers(dest="onboard_command", required=True)
+
+    onboard_sub.add_parser("show", parents=[common], help=t("показать текущие настройки мыши", "show the current mouse settings"))
+
+    onboard_sub.add_parser("backup", parents=[common], help=t("снять снимок конфигурации в ~/.config/mousecfg/backups", "take a configuration snapshot into ~/.config/mousecfg/backups"))
+
+    onboard_restore = onboard_sub.add_parser("restore", parents=[common], help=t("записать последний снимок обратно в мышь", "write the latest snapshot back to the mouse"))
+    onboard_restore.add_argument("--file", default=None, help=t("конкретный файл снимка", "a specific snapshot file"))
+    onboard_restore.add_argument("--allow-onboard-write", action="store_true", help=t("подтвердить запись в память мыши", "confirm the onboard-memory write"))
+    onboard_restore.add_argument("--yes", action="store_true", help=t("не спрашивать подтверждение", "do not ask for confirmation"))
+
+    onboard_apply = onboard_sub.add_parser("apply", parents=[common], help=t("записать настройки (DPI, частота, подсветка и т. д.)", "write settings (DPI, report rate, lighting, etc.)"))
+    onboard_apply.add_argument("--dpi", type=int, default=None, help=t("значение DPI для активного уровня", "DPI value for the active level"))
+    onboard_apply.add_argument("--dpi-level", type=int, default=None, help=t("номер уровня DPI (0..5)", "DPI level index (0..5)"))
+    onboard_apply.add_argument("--rate", default=None, help=t("'1000Hz', '1ms' или код 1..4", "'1000Hz', '1ms' or code 1..4"))
+    onboard_apply.add_argument("--light-mode", type=int, default=None, help=t("режим подсветки", "lighting mode"))
+    onboard_apply.add_argument("--lod", type=int, default=None, help=t("LOD (высота отрыва)", "LOD (lift-off distance)"))
+    onboard_apply.add_argument("--sleep-light", type=int, default=None, help=t("подсветка/сон", "sleep/light value"))
+    onboard_apply.add_argument("--key-respond", type=int, default=None, help=t("время отклика кнопок", "key response"))
+    onboard_apply.add_argument("--highspeed", type=int, default=None, help=t("high-speed mode", "high-speed mode"))
+    onboard_apply.add_argument("--allow-onboard-write", action="store_true", help=t("подтвердить запись в память мыши", "confirm the onboard-memory write"))
+    onboard_apply.add_argument("--yes", action="store_true", help=t("не спрашивать подтверждение", "do not ask for confirmation"))
 
     dpi = sub.add_parser("set-dpi", parents=[common], help=t("установить DPI (волатильно)", "set DPI (volatile)"))
     dpi.add_argument("dpi", type=int)
@@ -291,6 +324,14 @@ def vendor_audit() -> list[str]:
     lines.append(t("запрещено (запись в память):", "denied (writes to memory):"))
     for cmd, purpose in sorted(vendor_guard.MKESPN_WRITES.items()):
         lines.append(f"  {cmd:02x}/* {purpose}")
+    lines.append(
+        t(
+            "разрешено только командой mousecfg onboard с --allow-onboard-write:",
+            "allowed only via the mousecfg onboard command with --allow-onboard-write:",
+        )
+    )
+    for cmd, purpose in sorted(vendor_guard.MKESPN_CONSENTED_WRITES.items()):
+        lines.append(f"  {cmd:02x}/* {purpose}")
     return lines
 
 
@@ -478,6 +519,331 @@ def cmd_vendor(args: argparse.Namespace) -> int:
                 print(t(f"    текст:   {response.text}", f"    text:    {response.text}"))
     for note in probe.notes:
         print(f"  ! {note}")
+    return 0
+
+
+def _onboard_mouse(args: argparse.Namespace) -> discovery.MouseInfo | None:
+    """Мышь с вендорским каналом для операций onboard-памяти."""
+    mouse = discovery.mouse_for_hint(args.device) if args.device else None
+    if mouse is None and args.device is None:
+        mouse = next((item for item in discovery.find_mice() if item.vendor_path), None)
+    if mouse is None:
+        hint = t(f" по подсказке {args.device!r}", f" matching {args.device!r}") if args.device else ""
+        print(t(f"Мышь{hint} не найдена.", f"No mouse{hint} found."), file=sys.stderr)
+        return None
+    if not mouse.vendor_path:
+        print(t(f"{mouse.name}: вендорского канала нет", f"{mouse.name}: there is no vendor channel"), file=sys.stderr)
+        return None
+    return mouse
+
+
+def _onboard_confirm(mouse: discovery.MouseInfo, *, allow_write: bool, assume_yes: bool = False) -> bool:
+    """Показать предупреждение при первом подключении и получить согласие.
+
+    Без `--allow-onboard-write` запись не выполняется никогда. Согласие
+    запоминается по устройству и показывается один раз, но флаг всё равно
+    обязателен каждый раз: так запись не может «выстрелить» случайно.
+    `assume_yes` — явное «да» из неинтерактивного запуска: предупреждение
+    всё равно печатается, согласие записывается.
+    """
+    if not allow_write:
+        print(
+            t(
+                "Запись в память мыши не выполнена: нужен явный флаг --allow-onboard-write.",
+                "Nothing was written to the mouse: the explicit --allow-onboard-write flag is required.",
+            ),
+            file=sys.stderr,
+        )
+        return False
+    if onboard_consent.granted(mouse.key):
+        return True
+    print(onboard_consent.WARNING)
+    print(t(f"Устройство: {mouse.name}  [{mouse.usb_id}]  ключ {mouse.key}", f"Device: {mouse.name}  [{mouse.usb_id}]  key {mouse.key}"))
+    if assume_yes:
+        onboard_consent.record(mouse.key)
+        return True
+    if not sys.stdin.isatty():
+        print(
+            t(
+                "Нет интерактивного ввода: подтвердите согласие заранее "
+                "(добавьте --yes) или запустите в терминале.",
+                "No interactive input: confirm consent up front "
+                "(add --yes) or run it in a terminal.",
+            ),
+            file=sys.stderr,
+        )
+        return False
+    answer = input(t("Продолжить и разрешить запись? Введите 'да': ", "Continue and allow the write? Type 'yes': ")).strip().lower()
+    if answer not in {"да", "yes", "y", "д"}:
+        print(t("Отменено, согласие не записано.", "Cancelled, consent was not recorded."), file=sys.stderr)
+        return False
+    onboard_consent.record(mouse.key)
+    return True
+
+
+def _onboard_read_snapshot(device, mouse: discovery.MouseInfo, *, model: str = "") -> snapshot.Snapshot | None:
+    """Прочитать конфигурацию и собрать снимок (без записи в мышь)."""
+    reply = device.read_config()
+    if reply is None:
+        print(t("Мышь не ответила на чтение конфигурации", "The mouse did not answer the configuration read"), file=sys.stderr)
+        return None
+    keys = device.read_keys()
+    return snapshot.snapshot_from_reads(
+        reply,
+        device=mouse.name,
+        serial=mouse.serial,
+        usb_id=mouse.usb_id,
+        model=model,
+        keys_reply=keys,
+    )
+
+
+def cmd_onboard_show(args: argparse.Namespace) -> int:
+    from .vendor.device import VendorDevice, VendorError
+
+    mouse = _onboard_mouse(args)
+    if mouse is None:
+        return 1
+    try:
+        with VendorDevice(mouse.vendor_path) as device:
+            probe = device.probe()
+    except (VendorError, OSError) as exc:
+        print(exc, file=sys.stderr)
+        return 1
+
+    data: dict = {"device": mouse.name, "usb_id": mouse.usb_id, "key": mouse.key}
+    if probe.device is not None:
+        data["model"] = probe.device.model
+    if probe.dpi is not None:
+        data["dpi"] = probe.dpi.current_dpi
+        data["dpi_levels"] = probe.dpi.levels
+        data["report_rate_hz"] = probe.dpi.poll_rate_hz
+        data["light_mode"] = probe.dpi.light_mode
+        data["tail"] = probe.dpi.tail
+    if args.json:
+        _dump(data, True)
+        return 0
+    print(t(f"Мышь: {mouse.name}  [{mouse.usb_id}]", f"Mouse: {mouse.name}  [{mouse.usb_id}]"))
+    if "model" in data:
+        print(t(f"Модель: {data['model']}", f"Model: {data['model']}"))
+    if probe.dpi is not None and probe.dpi.levels:
+        print(t(f"Настройки: {probe.dpi.describe()}", f"Settings: {probe.dpi.describe()}"))
+    print(t("Запись: mousecfg onboard apply ... --allow-onboard-write", "To write: mousecfg onboard apply ... --allow-onboard-write"))
+    print(t("Снимок: mousecfg onboard backup", "Snapshot: mousecfg onboard backup"))
+    return 0
+
+
+def cmd_onboard_backup(args: argparse.Namespace) -> int:
+    from .vendor.device import VendorDevice, VendorError
+
+    mouse = _onboard_mouse(args)
+    if mouse is None:
+        return 1
+    try:
+        with VendorDevice(mouse.vendor_path) as device:
+            snap = _onboard_read_snapshot(device, mouse)
+    except (VendorError, OSError) as exc:
+        print(exc, file=sys.stderr)
+        return 1
+    if snap is None:
+        return 1
+    path = snapshot.save(snap)
+    if args.json:
+        from dataclasses import asdict
+
+        print(json.dumps({**asdict(snap), "file": str(path)}, ensure_ascii=False, indent=2))
+        return 0
+    print(t(f"Снимок сохранён: {path}", f"Snapshot saved: {path}"))
+    print(f"  {snap.describe()}")
+    if not snap.keys_frame or set(snap.keys_bytes) == {0xFF}:
+        print(t("  раскладка кнопок недоступна для чтения (страницы отдают ff)", "  the button mapping is not readable (pages return ff)"))
+    return 0
+
+
+def _parse_rate_code(value: str) -> int:
+    """Код частоты 1..4 из '1000Hz' / '1ms' / числа."""
+    text = str(value).strip().lower()
+    if text.endswith("hz"):
+        hz = int(text[:-2])
+        mapping = {125: 1, 250: 2, 500: 3, 1000: 4}
+        if hz not in mapping:
+            raise ValueError(t(f"частота {hz} Гц не поддерживается (125/250/500/1000)", f"{hz} Hz is not supported (125/250/500/1000)"))
+        return mapping[hz]
+    if text.endswith("ms"):
+        ms = int(text[:-2])
+        mapping = {8: 1, 4: 2, 2: 3, 1: 4}
+        if ms not in mapping:
+            raise ValueError(t(f"интервал {ms} мс не поддерживается (1/2/4/8)", f"{ms} ms is not supported (1/2/4/8)"))
+        return mapping[ms]
+    code = int(text)
+    if not 1 <= code <= 4:
+        raise ValueError(t("код частоты — 1..4", "the report-rate code is 1..4"))
+    return code
+
+
+def _onboard_collect_changes(args: argparse.Namespace, config_obj) -> list[str]:
+    """Применить аргументы CLI к живому конфигу. Вернуть список изменений."""
+    changes: list[str] = []
+    if args.dpi is not None:
+        index = args.dpi_level if args.dpi_level is not None else config_obj.dpi_index
+        config_obj.set_level(index, int(args.dpi))
+        changes.append(f"dpi[{index}]={args.dpi}")
+    if args.rate is not None:
+        code = _parse_rate_code(args.rate)
+        config_obj.report_rate_code = code
+        changes.append(f"report_rate={code}")
+    for name, value in (
+        ("light_mode", args.light_mode),
+        ("lod_value", args.lod),
+        ("sleep_light", args.sleep_light),
+        ("key_respond", args.key_respond),
+        ("highspeed_mode", args.highspeed),
+    ):
+        if value is not None:
+            setattr(config_obj, name, int(value))
+            changes.append(f"{name}={int(value)}")
+    return changes
+
+
+def cmd_onboard_apply(args: argparse.Namespace) -> int:
+    from .vendor.device import VendorDevice, VendorError
+
+    mouse = _onboard_mouse(args)
+    if mouse is None:
+        return 1
+    try:
+        with VendorDevice(mouse.vendor_path) as device:
+            reply = device.read_config()
+            if reply is None:
+                print(t("Мышь не ответила на чтение конфигурации", "The mouse did not answer the configuration read"), file=sys.stderr)
+                return 1
+            before = OnboardConfig.from_bytes(bytes(reply.data))
+            after = OnboardConfig.from_bytes(bytes(reply.data))
+            changes = _onboard_collect_changes(args, after)
+            if not changes:
+                print(
+                    t(
+                        "Не задано ни одной настройки. Пример: mousecfg onboard apply --dpi 1600 --rate 1000Hz --allow-onboard-write",
+                        "No setting given. Example: mousecfg onboard apply --dpi 1600 --rate 1000Hz --allow-onboard-write",
+                    ),
+                    file=sys.stderr,
+                )
+                return 1
+            if bytes(before.to_bytes()) == bytes(after.to_bytes()):
+                print(t("Значения уже такие — писать нечего.", "The values already match, nothing to write."))
+                return 0
+
+            frame = framing.mkespn_config_write_frame(after.to_bytes())
+            print(t(f"Мышь: {mouse.name}  [{mouse.usb_id}]", f"Mouse: {mouse.name}  [{mouse.usb_id}]"))
+            print(t(f"Изменения: {', '.join(changes)}", f"Changes: {', '.join(changes)}"))
+            print(t(f"Кадр записи: {frame.hex(' ')}", f"Write frame: {frame.hex(' ')}"))
+
+            if args.dry_run:
+                print(t("dry-run: кадр не отправлен, мышь не изменена.", "dry-run: the frame was not sent, the mouse is unchanged."))
+                return 0
+            if not _onboard_confirm(mouse, allow_write=bool(args.allow_onboard_write), assume_yes=bool(args.yes)):
+                return 3
+
+            # 1) бэкап обязательно, до любой записи
+            snap = snapshot.snapshot_from_reads(reply, device=mouse.name, serial=mouse.serial, usb_id=mouse.usb_id)
+            path = snapshot.save(snap)
+            print(t(f"Снимок перед записью: {path}", f"Snapshot before the write: {path}"))
+    except (VendorError, OSError) as exc:
+        print(exc, file=sys.stderr)
+        return 1
+
+    # 2) запись и контрольное чтение
+    try:
+        with VendorDevice(mouse.vendor_path) as device:
+            sent = device.write_config(after.to_bytes())
+            if sent is None:
+                print(t("Мышь не подтвердила запись", "The mouse did not confirm the write"), file=sys.stderr)
+                return 1
+            check = device.read_config()
+    except (VendorError, OSError) as exc:
+        print(exc, file=sys.stderr)
+        return 1
+
+    if check is None:
+        print(t("Запись отправлена, но контрольное чтение не удалось.", "The write was sent, but the verification read failed."))
+        return 0
+    verified = OnboardConfig.from_bytes(bytes(check.data))
+    print(t("Записано и прочитано назад:", "Written and read back:"))
+    print(f"  {describe_onboard(verified)}")
+    remaining = verified.changes_against(after)
+    if remaining:
+        print(t(f"  предупреждение: не совпало: {', '.join(remaining)}", f"  warning: mismatch: {', '.join(remaining)}"))
+    else:
+        print(t("  значения совпали с записанными", "  the values match what was written"))
+    return 0
+
+
+def describe_onboard(config_obj) -> str:
+    levels = ", ".join(str(item) for item in config_obj.dpi_levels)
+    rates = {1: 125, 2: 250, 3: 500, 4: 1000}
+    hz = rates.get(config_obj.report_rate_code, 0)
+    rate = t(f"{hz} Гц", f"{hz} Hz") if hz else t(f"код {config_obj.report_rate_code}", f"code {config_obj.report_rate_code}")
+    return t(
+        f"DPI: {config_obj.dpi_levels[config_obj.dpi_index] if config_obj.dpi_levels else '?'} "
+        f"(уровни: {levels}), частота: {rate}, свет: {config_obj.light_mode}, "
+        f"LOD: {config_obj.lod_value}, сон: {config_obj.sleep_light}, отклик: {config_obj.key_respond}",
+        f"DPI: {config_obj.dpi_levels[config_obj.dpi_index] if config_obj.dpi_levels else '?'} "
+        f"(levels: {levels}), report rate: {rate}, light: {config_obj.light_mode}, "
+        f"LOD: {config_obj.lod_value}, sleep: {config_obj.sleep_light}, response: {config_obj.key_respond}",
+    )
+
+
+def cmd_onboard_restore(args: argparse.Namespace) -> int:
+    from pathlib import Path
+
+    from .vendor.device import VendorDevice, VendorError
+
+    mouse = _onboard_mouse(args)
+    if mouse is None:
+        return 1
+    if args.file:
+        snap = snapshot._read(Path(args.file).expanduser())  # noqa: SLF001
+    else:
+        snap = snapshot.load_latest(usb_id=mouse.usb_id, serial=mouse.serial)
+    if snap is None:
+        print(
+            t(
+                "Снимок не найден. Сначала: mousecfg onboard backup",
+                "No snapshot found. First: mousecfg onboard backup",
+            ),
+            file=sys.stderr,
+        )
+        return 1
+
+    config_obj = OnboardConfig.from_bytes(snap.config_bytes)
+    frame = framing.mkespn_config_write_frame(snap.config_bytes)
+    print(t(f"Мышь: {mouse.name}  [{mouse.usb_id}]", f"Mouse: {mouse.name}  [{mouse.usb_id}]"))
+    print(t(f"Снимок: {snap.describe()}", f"Snapshot: {snap.describe()}"))
+    print(t(f"Будет записано: {describe_onboard(config_obj)}", f"Will be written: {describe_onboard(config_obj)}"))
+    print(t(f"Кадр записи: {frame.hex(' ')}", f"Write frame: {frame.hex(' ')}"))
+
+    if args.dry_run:
+        print(t("dry-run: кадр не отправлен, мышь не изменена.", "dry-run: the frame was not sent, the mouse is unchanged."))
+        return 0
+    if not _onboard_confirm(mouse, allow_write=bool(args.allow_onboard_write), assume_yes=bool(args.yes)):
+        return 3
+
+    try:
+        with VendorDevice(mouse.vendor_path) as device:
+            sent = device.write_config(snap.config_bytes)
+            if sent is None:
+                print(t("Мышь не подтвердила запись", "The mouse did not confirm the write"), file=sys.stderr)
+                return 1
+            check = device.read_config()
+    except (VendorError, OSError) as exc:
+        print(exc, file=sys.stderr)
+        return 1
+
+    if check is not None:
+        verified = OnboardConfig.from_bytes(bytes(check.data))
+        print(t("Прочитано назад:", "Read back:"))
+        print(f"  {describe_onboard(verified)}")
+    print(t("Готово.", "Done."))
     return 0
 
 
@@ -1450,6 +1816,8 @@ def _command_name(args: argparse.Namespace) -> str:
         return f"profile-{args.profile_command}"
     if args.command == "macro":
         return f"macro-{args.macro_command}"
+    if args.command == "onboard":
+        return f"onboard-{args.onboard_command}"
     return str(args.command)
 
 
@@ -1462,6 +1830,10 @@ def main(argv: list[str] | None = None) -> int:
         "judge": cmd_judge,
         "get": cmd_get,
         "vendor": cmd_vendor,
+        "onboard-show": cmd_onboard_show,
+        "onboard-backup": cmd_onboard_backup,
+        "onboard-apply": cmd_onboard_apply,
+        "onboard-restore": cmd_onboard_restore,
         "set-dpi": cmd_set_dpi,
         "set-rate": cmd_set_rate,
         "mode": cmd_mode,

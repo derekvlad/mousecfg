@@ -121,7 +121,8 @@ manages it at the evdev level only.
 | Protocol commands | `set-dpi`, `set-rate`, `lighting`, `mode` return a clear error and send nothing |
 | Vendor channel | interface 2 (`usage page 0xFF01`, 64-byte in/out); the project opens it **read-only** — `mousecfg vendor [--probe]` |
 | YJX protocol | reverse-engineered by the community: frame `55 cmd sub chk len off_lo off_hi page data…`, reply `aa …`. Read commands: `03/00` identification, `08/a5` mode pages, `0e/a5` DPI/report rate/lighting, `30/a5`, `fa/ae` |
-| Why we never write | writing the configuration goes straight to onboard flash, and `0d/00` with a non-empty body clears a range of memory. The `vendor/guard.py` policy refuses every write frame before it is sent |
+| Writing | available only explicitly: `mousecfg onboard apply/restore --allow-onboard-write`, with a snapshot before the write and a warning. The daemon and profiles never touch the memory |
+| Why it is careful | writing goes straight to onboard flash, and `0d/00` with a non-empty body clears a range of memory. The `vendor/guard.py` policy refuses write frames outside an explicit operation |
 
 ### What could actually be read (2026-11-13)
 
@@ -150,6 +151,38 @@ get` shows it as `dpi`, and `dpi_levels` as the list. The configuration tail
 (`01 0a 0a ff …` — LOD, sensor, sleep mode) is not decoded yet and stays in the
 raw dump. **DPI/report rate cannot be changed from Linux**: every write command
 is refused by the project policy.
+
+### Writing to the mouse memory (2026-11-13)
+
+The write protocol was recovered from the JS of the AJAZZ web configurator
+itself (`ajazz.yjx2012.com/ajazz-2012a`, model AJ139 V2 MC) and verified on the
+live mouse. Frames and fields:
+
+| What | Frame / fields |
+|---|---|
+| Configuration write | `55 0f ae 0b 30 01 01 01 <48 bytes>` (the `0b` in field 3 mirrors the vendor tool) |
+| Configuration fields | `[1]` lighting, `[2]` report-rate code 1..4, `[3]` level count, `[4]` active level + 1, `[5..16]` six DPI levels as LE16, `[40]` scroll, `[41]` LOD, `[42]` sensor, `[43]` response, `[44]` sleep, `[45]` highspeed |
+| Key write | `55 09 a5 a5 22 20 00 00 00 <5 records of 4 bytes>` |
+| A read returns 47 bytes | 48 bytes are written (the missing one is padded with zero) |
+
+How this stays safe:
+
+* writing is available only via `mousecfg onboard apply/restore` and only with
+  `--allow-onboard-write`; on the first connect a warning is printed and consent
+  is remembered per device;
+* **before every write** a snapshot is taken (`~/.config/mousecfg/backups`, a
+  JSON with the full frame) — it restores the previous state
+  (`mousecfg onboard restore`);
+* a value is written **on top of a live read**, so service and unknown bytes
+  (including byte 47, which changes by itself) are not overwritten;
+* `0d/00` (memory erase) is never sent, even when writing is allowed.
+
+Verified live: writing DPI level 2400 → the read confirmed the change →
+`onboard restore` from the snapshot brought 2700 back. The daemon still never
+touches the memory: profiles stay volatile.
+
+Fallback if something goes wrong: the AJAZZ web configurator → Onboard
+configuration → Import the snapshot or Reset to default; the vendor software.
 
 ### Limitations
 

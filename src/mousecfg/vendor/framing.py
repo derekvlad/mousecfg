@@ -78,6 +78,55 @@ def parse_mkespn_reply(frame: bytes) -> MkespnReply | None:
     return MkespnReply(cmd=frame[1], sub=frame[2], page=frame[7], data=data, raw=frame)
 
 
+# Значение поля 3 в кадрах записи конфигурации. Прошивка его не
+# проверяет, но веб-инструмент AJAZZ всегда ставит 0x0b — повторяем,
+# чтобы кадр был побайтно таким же, как у штатного инструмента.
+CONFIG_WRITE_MARKER = 0x0B
+# Классический заголовок кадра записи config (0f/ae): marker, len, 1, 1, 1.
+CONFIG_WRITE_PREFIX = bytes([CONFIG_WRITE_MARKER, 0x30, 0x01, 0x01, 0x01])
+
+
+def mkespn_config_write_frame(config: bytes) -> bytes:
+    """Собрать кадр записи `0f/ae` из 48-байтной конфигурации.
+
+    Раскладка совпадает с веб-инструментом: `55 0f ae <marker> 30 01 01 01`
+    и далее данные конфигурации. Прямой записи в память здесь нет — кадр
+    только собирается; отправляет его `device` после проверки политики.
+    """
+    if not config:
+        raise FrameError("config is empty")
+    # Чтение отдаёт 47 байт (последний, 48-й, скрыт), а запись всегда
+    # 48-байтная: недостающий байт дополняем нулём, как это делает
+    # веб-инструмент для моделей без compose-поля в этом байте.
+    body = bytearray(config[: FRAME_SIZE - 8])
+    if len(body) < 0x30:
+        body += bytes(0x30 - len(body))
+    frame = bytearray(FRAME_SIZE)
+    frame[0] = MKESPN_REQUEST_MARKER
+    frame[1] = 0x0F
+    frame[2] = 0xAE
+    frame[3 : 3 + len(CONFIG_WRITE_PREFIX)] = CONFIG_WRITE_PREFIX
+    frame[8 : 8 + len(body)] = body
+    return bytes(frame)
+
+
+def mkespn_keys_write_frame(keys: bytes) -> bytes:
+    """Собрать кадр записи раскладки кнопок `09/a5` (34 = 0x22).
+
+    В байтах 5..8 — `0x20 00 00 00` (как у инструмента), затем записи
+    кнопок по 4 байта, затем фиксированные RGB/служебные поля.
+    """
+    frame = bytearray(FRAME_SIZE)
+    frame[0] = MKESPN_REQUEST_MARKER
+    frame[1] = 0x09
+    frame[2] = 0xA5
+    frame[3] = 0xA5
+    frame[4] = 0x22
+    frame[5:9] = bytes([0x20, 0x00, 0x00, 0x00])
+    frame[9 : 9 + len(keys)] = keys[: FRAME_SIZE - 9]
+    return bytes(frame)
+
+
 def yjx_packet(cmd: int, payload: bytes = b"") -> bytes:
     """Короткий пакет SDK: `f0 cmd payload…`."""
     if len(payload) > FRAME_SIZE - 2:

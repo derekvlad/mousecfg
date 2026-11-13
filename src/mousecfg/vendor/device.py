@@ -15,7 +15,7 @@ from mousecfg.i18n import t
 
 from . import framing
 from .framing import MkespnReply
-from .guard import Dialect, VendorRefused, ensure_read
+from .guard import Dialect, VendorRefused, ensure_onboard_write, ensure_read
 from .parsers import (
     DeviceIdentification,
     DpiConfig,
@@ -251,6 +251,45 @@ class VendorDevice:
             return None
 
         return self.transport.exchange(request, matches)  # type: ignore[return-value]
+
+    # -- чтение/запись конфигурации (запись — только по согласию) --------
+    def read_config(self) -> MkespnReply | None:
+        """Прочитать 48-байтную конфигурацию (`0e/a5`)."""
+        return self._mkespn_query(0x0E, 0xA5, length=0x30)
+
+    def read_keys(self) -> MkespnReply | None:
+        """Прочитать раскладку кнопок (`08/a5`). Может вернуть `ff`."""
+        return self._mkespn_query(0x08, 0xA5, length=0x20)
+
+    def write_config(self, config: bytes, *, dry_run: bool = False) -> bytes | None:
+        """Записать конфигурацию в память мыши. Только по явному согласию.
+
+        `dry_run` не отправляет кадр вообще. Перед отправкой команда проходит
+        `guard.ensure_onboard_write`. После записи вызывающий сам снимает
+        контрольное чтение.
+        """
+        frame = framing.mkespn_config_write_frame(config)
+        ensure_onboard_write(frame[1], frame[2])
+        if dry_run:
+            return None
+        return self._write_and_wait(frame, expect_cmd=0x0F)
+
+    def write_keys(self, keys: bytes, *, dry_run: bool = False) -> bytes | None:
+        """Записать раскладку кнопок (`09/a5`). Только по явному согласию."""
+        frame = framing.mkespn_keys_write_frame(keys)
+        ensure_onboard_write(frame[1], frame[2])
+        if dry_run:
+            return None
+        return self._write_and_wait(frame, expect_cmd=0x09)
+
+    def _write_and_wait(self, frame: bytes, *, expect_cmd: int) -> bytes | None:
+        def accept(raw: bytes) -> bytes | None:
+            reply = framing.parse_mkespn_reply(raw)
+            if reply is not None and reply.cmd == expect_cmd:
+                return reply.raw
+            return None
+
+        return self.transport.exchange(frame, accept)  # type: ignore[return-value]
 
 
 def read_battery_percent(path: str, *, timeout: float = 0.8) -> int | None:
