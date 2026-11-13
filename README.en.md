@@ -466,6 +466,7 @@ the virtual output. A real mouse is not needed for this.
 
 - [`docs/en/device-matrix.md`](docs/en/device-matrix.md) — what has been tested on real hardware;
 - [`docs/en/architecture.md`](docs/en/architecture.md) — the layers and why they are like that;
+- [`docs/en/onboard.md`](docs/en/onboard.md) — writing to the mouse memory: commands, safety, recovery;
 - [`docs/en/licensing.md`](docs/en/licensing.md) — licences and code provenance.
 
 ## Development

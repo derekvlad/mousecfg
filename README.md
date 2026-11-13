@@ -480,6 +480,7 @@ PYTHONPATH=src python3 scripts/evdev-selftest.py
 
 - `docs/device-matrix.md` — что проверено на реальном железе;
 - `docs/architecture.md` — слои и почему так;
+- `docs/onboard.md` — запись в память мыши: команды, безопасность, восстановление;
 - `docs/licensing.md` — лицензии и происхождение кода;
 - `docs/en/*.md` — те же документы на английском (и `README.en.md`).
 
