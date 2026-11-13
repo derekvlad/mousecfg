@@ -15,7 +15,7 @@ GUI (GTK4/libadwaita)   CLI (mousecfg)   tray (GTK3 + AppIndicator3)
          JSON-RPC over a UNIX socket
                   |
           daemon (systemd --user)
-          ├── discovery    — find Logitech hidraw nodes (sysfs)
+          ├── discovery    — find mice in sysfs: HID++ and evdev-only
           ├── profiles     — TOML schema, storage, matching
           ├── apply        — apply a profile, retry on hotplug
           ├── appwatch     — focused application → profile selection
@@ -24,6 +24,14 @@ GUI (GTK4/libadwaita)   CLI (mousecfg)   tray (GTK3 + AppIndicator3)
                   |
           hidpp: transport → safeplane → guard → device
 ```
+
+There are two levels of protocol support. HID++ (`hidpp/`) provides DPI, report
+rate, mode and lighting. Mice with a closed vendor protocol (e.g. AJAZZ 2.4G)
+are managed through evdev only: `discovery.find_mice()` groups the hidraw
+interfaces of one device, marks the protocol and finds the `event` node.
+For `protocol = "evdev"` the daemon never opens hidraw, and
+`engine.apply_profile(None, …)` skips protocol settings with a clear
+explanation; profiles, buttons and macros keep working.
 
 `hidpp/guard.py` and `hidpp/safeplane.py` are the core of the requirement. Every
 send goes through `SafePlane.send()`: first the command is classified

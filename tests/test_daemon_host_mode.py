@@ -169,6 +169,21 @@ def test_attach_switches_to_host_with_consent(tmp_path, monkeypatch):
         usb_address="1-2",
     )
     key = registry.device_key(serial="1", usb_id=node.usb_id, usb_address="1-2")
+    mouse = discovery.MouseInfo(
+        key=key,
+        name=node.name,
+        serial=node.serial,
+        usb_id=node.usb_id,
+        usb_address=node.usb_address,
+        vendor_id=node.vendor_id,
+        product_id=node.product_id,
+        protocol="hidpp",
+        family="",
+        hidraw_path=node.path,
+        input_path="",
+        interface_number=node.interface_number,
+        capabilities=discovery.HIDPP_CAPABILITIES,
+    )
     consent.record(key)
 
     class _Opened:
@@ -189,7 +204,7 @@ def test_attach_switches_to_host_with_consent(tmp_path, monkeypatch):
     d = daemon.Daemon(daemon.DaemonConfig(watch_apps=False, apply_buttons=False))
     monkeypatch.setattr(d, "_apply", lambda *_a, **_k: None)
 
-    d._attach(node, key)
+    d._attach(mouse)
 
     assert device.host_calls == 1
     assert d.state[key].mode == "host"
@@ -215,6 +230,21 @@ def test_attach_keeps_onboard_without_consent(tmp_path, monkeypatch):
         usb_address="1-2",
     )
     key = registry.device_key(serial="1", usb_id=node.usb_id, usb_address="1-2")
+    mouse = discovery.MouseInfo(
+        key=key,
+        name=node.name,
+        serial=node.serial,
+        usb_id=node.usb_id,
+        usb_address=node.usb_address,
+        vendor_id=node.vendor_id,
+        product_id=node.product_id,
+        protocol="hidpp",
+        family="",
+        hidraw_path=node.path,
+        input_path="",
+        interface_number=node.interface_number,
+        capabilities=discovery.HIDPP_CAPABILITIES,
+    )
 
     class _Opened:
         def __init__(self) -> None:
@@ -234,7 +264,7 @@ def test_attach_keeps_onboard_without_consent(tmp_path, monkeypatch):
     d = daemon.Daemon(daemon.DaemonConfig(watch_apps=False, apply_buttons=False))
     monkeypatch.setattr(d, "_apply", lambda *_a, **_k: None)
 
-    d._attach(node, key)
+    d._attach(mouse)
 
     assert device.host_calls == 0
     assert d.state[key].mode == "onboard"

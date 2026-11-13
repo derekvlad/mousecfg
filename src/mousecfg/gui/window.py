@@ -292,12 +292,21 @@ class MainWindow(Adw.ApplicationWindow):
 
         device = self.devices[0]
         self.device_key = str(device.get("key") or "")
-        self.dpi_row.set_sensitive(True)
-        self.rate_row.set_sensitive(True)
+        capabilities = set(device.get("capabilities") or [])
+        protocol = str(device.get("protocol") or "hidpp")
+        self.dpi_row.set_sensitive("dpi" in capabilities)
+        self.rate_row.set_sensitive("report_rate" in capabilities)
 
-        mode = device.get("mode") or t("неизвестен", "unknown")
+        mode = device.get("mode") or ("evdev" if protocol == "evdev" else t("неизвестен", "unknown"))
         self.mode_badge.set_text(mode)
-        if mode == "onboard":
+        if protocol == "evdev":
+            self.mode_row.set_subtitle(
+                t("Модель без HID++: профили, кнопки и макросы работают, "
+                "а DPI/частота/подсветка настраиваются только самой мышью",
+                "Model without HID++: profiles, buttons and macros work, "
+                "while DPI/report rate/lighting are set on the mouse itself")
+            )
+        elif mode == "onboard":
             self.mode_row.set_subtitle(
                 t("On-Board: настройки с хоста могут игнорироваться. Переключите в host командой "
                 "mousecfg mode host --allow-onboard-switch (однократная запись)",

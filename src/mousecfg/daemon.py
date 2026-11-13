@@ -14,7 +14,7 @@ import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
-from . import appwatch, config, consent, engine, ipc, profiles, registry, session
+from . import appwatch, config, consent, discovery, engine, ipc, profiles, registry, session
 from .hidpp.protocol import ProtocolError, TransportError
 from .i18n import t
 from .input.actions import ActionError, parse_action
@@ -125,23 +125,22 @@ class Daemon:
     # -- основной цикл --------------------------------------------------
     def _tick(self) -> None:
         try:
-            nodes = session.discovery.logitech_hidpp_nodes()
+            mice = discovery.find_mice()
         except Exception as exc:  # noqa: BLE001
             logger.warning(t("обнаружение устройств упало: %s", "device discovery failed: %s"), exc)
             return
 
-        present = {registry.device_key(serial=node.serial, usb_id=node.usb_id, usb_address=node.usb_address) for node in nodes}
+        present = {mouse.key for mouse in mice}
         with self._lock:
             for key in list(self.devices):
                 if key not in present:
                     logger.info(t("устройство %s отключено", "device %s disconnected"), key)
                     self.devices.pop(key).stop()
 
-        for node in nodes:
-            key = registry.device_key(serial=node.serial, usb_id=node.usb_id, usb_address=node.usb_address)
-            if key in self.devices:
+        for mouse in mice:
+            if mouse.key in self.devices:
                 continue
-            self._attach(node, key)
+            self._attach(mouse)
 
         if self.watcher is not None and self.options.watch_apps:
             self._check_focus()
@@ -203,22 +202,31 @@ class Daemon:
             )
         return new_mode
 
-    def _attach(self, node: session.discovery.HidrawNode, key: str) -> None:
+    def _attach(self, mouse: discovery.MouseInfo) -> None:
+        """Подключить мышь: HID++ — полный протокол, остальные — только evdev."""
+        if mouse.supports_hidpp:
+            self._attach_hidpp(mouse)
+        else:
+            self._attach_evdev(mouse)
+
+    def _attach_hidpp(self, mouse: discovery.MouseInfo) -> None:
+        path = mouse.hidraw_path
+        key = mouse.key
         try:
             opened = session.open_device(
-                node.path,
+                path,
                 allow_onboard_switch=self._allow_switch_for(key),
                 dry_run=self.options.dry_run,
             )
         except Exception as exc:  # noqa: BLE001
-            logger.warning(t("не удалось открыть %s: %s", "failed to open %s: %s"), node.path, exc)
+            logger.warning(t("не удалось открыть %s: %s", "failed to open %s: %s"), path, exc)
             return
 
         try:
             info = opened.device.info()
             mode = opened.device.get_mode() if opened.device.has_feature(0x8100) else ""
         except Exception as exc:  # noqa: BLE001
-            logger.warning(t("не удалось прочитать %s: %s", "failed to read %s: %s"), node.path, exc)
+            logger.warning(t("не удалось прочитать %s: %s", "failed to read %s: %s"), path, exc)
             opened.close()
             return
 
@@ -227,7 +235,7 @@ class Daemon:
         # раз давал согласие на переход, повторяем его здесь — иначе настройки
         # с хоста будут игнорироваться до ручного `mousecfg mode host`.
         if mode == "onboard" and self._allow_switch_for(key):
-            mode = self._switch_to_host(opened.device, name=info.name or node.name)
+            mode = self._switch_to_host(opened.device, name=info.name or mouse.name)
 
         dpi = None
         rate_ms = None
@@ -236,21 +244,23 @@ class Daemon:
             dpi = opened.device.get_dpi()
             rate_ms = opened.device.get_rate_ms()
         except Exception as exc:  # noqa: BLE001
-            logger.debug(t("DPI/rate недоступны у %s: %s", "DPI/rate are unavailable on %s: %s"), node.path, exc)
+            logger.debug(t("DPI/rate недоступны у %s: %s", "DPI/rate are unavailable on %s: %s"), path, exc)
         try:
             lighting_supported = opened.device.has_feature(0x8071)
         except Exception as exc:  # noqa: BLE001
-            logger.debug(t("подсветка недоступна у %s: %s", "lighting is unavailable on %s: %s"), node.path, exc)
+            logger.debug(t("подсветка недоступна у %s: %s", "lighting is unavailable on %s: %s"), path, exc)
         finally:
             opened.close()
 
         state = self.state.get(key) or registry.DeviceState(key=key)
-        state.serial = node.serial
-        state.name = info.name or node.name
-        state.usb_id = node.usb_id
-        state.usb_address = node.usb_address
-        state.path = node.path
+        state.serial = mouse.serial
+        state.name = info.name or mouse.name
+        state.usb_id = mouse.usb_id
+        state.usb_address = mouse.usb_address
+        state.path = path
         state.mode = mode
+        state.protocol = "hidpp"
+        state.capabilities = sorted(mouse.capabilities)
         state.lighting_supported = lighting_supported
         state.seen_at = time.time()
         state.profiles_file = state.profiles_file or str(self.options.profiles_dir / f"{_slug(state.name)}.toml")
@@ -269,6 +279,48 @@ class Daemon:
                 "Switch with: mousecfg mode host --allow-onboard-switch"),
                 state.name,
             )
+
+        self._apply(runtime, reason="подключение")
+        if self.options.apply_buttons:
+            self._start_remap(runtime)
+        registry.save_state(self.state)
+        self.server.publish({"type": "device-added", "device": ipc.serialize(asdict(state))})
+
+    def _attach_evdev(self, mouse: discovery.MouseInfo) -> None:
+        """Мышь без HID++: hidraw не трогаем вовсе, работаем через evdev.
+
+        DPI, частоту опроса и подсветку у таких моделей задаёт только их
+        собственное ПО через закрытый протокол — мы в него не лезем. Зато
+        профили, ремап кнопок и макросы целиком живут на хосте.
+        """
+        key = mouse.key
+        state = self.state.get(key) or registry.DeviceState(key=key)
+        state.serial = mouse.serial
+        state.name = mouse.name
+        state.usb_id = mouse.usb_id
+        state.usb_address = mouse.usb_address
+        # hidraw-путь не нужен: открывать его мы не собираемся.
+        state.path = ""
+        state.input_path = mouse.input_path
+        state.mode = ""
+        state.protocol = "evdev"
+        state.capabilities = sorted(mouse.capabilities)
+        state.lighting_supported = False
+        state.seen_at = time.time()
+        state.profiles_file = state.profiles_file or str(self.options.profiles_dir / f"{_slug(state.name)}.toml")
+        self.state[key] = state
+
+        runtime = DeviceRuntime(key=key, state=state)
+        self._load_profile_set(runtime)
+        self.devices[key] = runtime
+
+        logger.info(
+            t(
+                "подключено: %s (evdev: DPI, частота и подсветка недоступны)",
+                "connected: %s (evdev: DPI, report rate and lighting are unavailable)",
+            ),
+            state.name,
+        )
 
         self._apply(runtime, reason="подключение")
         if self.options.apply_buttons:
@@ -313,17 +365,21 @@ class Daemon:
         ):
             return
 
-        try:
-            with session.open_device(
-                runtime.state.path,
-                allow_onboard_switch=self._allow_switch_for(runtime.key),
-                dry_run=self.options.dry_run,
-            ) as opened:
-                result = engine.apply_profile(opened.device, chosen)
-        except (TransportError, ProtocolError, TimeoutError, OSError) as exc:
-            runtime.last_error = str(exc)
-            logger.warning(t("%s: не удалось применить профиль %s: %s", "%s: failed to apply profile %s: %s"), runtime.state.name, chosen.id, exc)
-            return
+        if runtime.state.protocol == "hidpp":
+            try:
+                with session.open_device(
+                    runtime.state.path,
+                    allow_onboard_switch=self._allow_switch_for(runtime.key),
+                    dry_run=self.options.dry_run,
+                ) as opened:
+                    result = engine.apply_profile(opened.device, chosen)
+            except (TransportError, ProtocolError, TimeoutError, OSError) as exc:
+                runtime.last_error = str(exc)
+                logger.warning(t("%s: не удалось применить профиль %s: %s", "%s: failed to apply profile %s: %s"), runtime.state.name, chosen.id, exc)
+                return
+        else:
+            # Мышь без HID++: hidraw не открываем, профиль применяет evdev-слой.
+            result = engine.apply_profile(None, chosen)
 
         runtime.active_profile = chosen
         runtime.state.active_profile = chosen.id
@@ -534,6 +590,8 @@ class Daemon:
         data["profile_details"] = self._profile_details(runtime)
         data["dpi"] = runtime.dpi
         data["report_rate_ms"] = runtime.report_rate_ms
+        data["protocol"] = runtime.state.protocol
+        data["capabilities"] = list(runtime.state.capabilities)
         data["lighting_supported"] = self._lighting_supported(runtime)
         if runtime.active_profile is not None:
             data["buttons_plan"] = engine.plan_button_actions(runtime.active_profile)
@@ -578,12 +636,15 @@ class Daemon:
         if chosen is None:
             raise ipc.IpcError(t(f"профиль {profile_id!r} не найден в {runtime.state.profiles_file}", f"profile {profile_id!r} not found in {runtime.state.profiles_file}"))
 
-        with session.open_device(
-            runtime.state.path,
-            allow_onboard_switch=self._allow_switch_for(runtime.key),
-            dry_run=self.options.dry_run,
-        ) as opened:
-            result = engine.apply_profile(opened.device, chosen)
+        if runtime.state.protocol == "hidpp":
+            with session.open_device(
+                runtime.state.path,
+                allow_onboard_switch=self._allow_switch_for(runtime.key),
+                dry_run=self.options.dry_run,
+            ) as opened:
+                result = engine.apply_profile(opened.device, chosen)
+        else:
+            result = engine.apply_profile(None, chosen)
         runtime.active_profile = chosen
         runtime.state.active_profile = chosen.id
         runtime.state.pinned_profile = chosen.id
@@ -597,6 +658,19 @@ class Daemon:
         self.server.publish({"type": "profile-applied", "device": key, "result": result.describe()})
         return {"result": result.describe(), "applied": ipc.serialize(result.applied)}
 
+    def _require_hidpp(self, runtime: DeviceRuntime, what: str, what_en: str) -> None:
+        """Команды протокола (DPI/частота/подсветка) — только для HID++."""
+        if runtime.state.protocol == "hidpp":
+            return
+        raise ipc.IpcError(
+            t(
+                f"{runtime.state.name}: {what} недоступны — у модели нет HID++. "
+                "Работают профили, кнопки и макросы (evdev)",
+                f"{runtime.state.name}: {what_en} are unavailable — this model has no HID++. "
+                "Profiles, buttons and macros (evdev) do work",
+            )
+        )
+
     def _rpc_set(self, params: dict, what: str) -> dict:
         key = str(params.get("device", ""))
         value = int(params["value"])
@@ -604,6 +678,10 @@ class Daemon:
             runtime = self.devices.get(key)
         if runtime is None:
             raise ipc.IpcError(t(f"устройство {key!r} не подключено", f"device {key!r} is not connected"))
+        if what == "dpi":
+            self._require_hidpp(runtime, "DPI", "DPI")
+        else:
+            self._require_hidpp(runtime, "частота опроса", "report rate")
 
         with session.open_device(
             runtime.state.path,
@@ -632,6 +710,7 @@ class Daemon:
     def _rpc_set_lighting(self, params: dict) -> dict:
         """Включить подсветку волатильно (fn 0x10; NvConfig не трогается)."""
         runtime = self._runtime_or_error(str(params.get("device", "")))
+        self._require_hidpp(runtime, "подсветка", "lighting")
         effect = str(params.get("effect", "static")).lower()
         params_block = {
             "effect": effect,
@@ -687,12 +766,15 @@ class Daemon:
         if chosen is None:
             raise ipc.IpcError(t(f"профиль {profile_id!r} не найден", f"profile {profile_id!r} not found"))
 
-        with session.open_device(
-            runtime.state.path,
-            allow_onboard_switch=self._allow_switch_for(runtime.key),
-            dry_run=self.options.dry_run,
-        ) as opened:
-            result = engine.apply_profile(opened.device, chosen)
+        if runtime.state.protocol == "hidpp":
+            with session.open_device(
+                runtime.state.path,
+                allow_onboard_switch=self._allow_switch_for(runtime.key),
+                dry_run=self.options.dry_run,
+            ) as opened:
+                result = engine.apply_profile(opened.device, chosen)
+        else:
+            result = engine.apply_profile(None, chosen)
         runtime.active_profile = chosen
         runtime.state.active_profile = chosen.id
         runtime.state.pinned_profile = chosen.id

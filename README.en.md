@@ -20,6 +20,9 @@ daemon applies them again on reconnect.
 ## Features
 
 - HID++ 2.0: DPI, report rate, device mode, name/firmware (Logitech);
+- mice without HID++ (e.g. AJAZZ 2.4G): per-application profiles, button
+  remapping and macros through evdev; DPI, report rate and lighting are set on
+  the mouse itself. See what was found and what is available with `mousecfg list`;
 - a `systemd --user` daemon: it finds the mouse, applies a profile on connect
   and switches profiles based on the focused application;
 - TOML profiles: DPI, report rate, buttons, macros, matching by serial number
@@ -143,6 +146,10 @@ The first rule grants an ACL on the mouse HID++ node (hidraw), the second on
 `mousecfg virtual input`, through which events are relayed. The daemon does not
 need root: it runs in the user session.
 
+Mice without HID++ (see `mousecfg list`) do not need hidraw access at all: the
+second and third rules are enough — profiles, buttons and macros work through
+evdev/uinput.
+
 Check that the ACL appeared:
 
 ```sh
@@ -194,7 +201,7 @@ hidraw/uinput — root is not required.
 ## Usage
 
 ```sh
-mousecfg list                 # find devices
+mousecfg list                 # find mice and their protocol
 mousecfg judge                # policy: what is allowed, what is denied
 mousecfg get                  # name, firmware, DPI, report rate, mode
 mousecfg set-dpi 1600         # volatile

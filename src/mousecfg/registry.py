@@ -29,6 +29,10 @@ class DeviceState:
     usb_address: str = ""
     path: str = ""
     input_path: str = ""
+    # "hidpp" — полный протокол Logitech; "evdev" — мышь без HID++:
+    # профили, кнопки и макросы на хосте, но без DPI/частоты/подсветки.
+    protocol: str = "hidpp"
+    capabilities: list[str] = field(default_factory=list)
     profiles_file: str = ""
     active_profile: str = ""
     # Профиль, выбранный пользователем вручную (CLI/трей/GUI). Демон

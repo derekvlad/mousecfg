@@ -18,6 +18,10 @@ class DeviceNotFound(LookupError):
     pass
 
 
+class UnsupportedProtocol(LookupError):
+    """Устройство найдено, но HID++ на нём нет — команды протокола недоступны."""
+
+
 @dataclass
 class OpenDevice:
     node: discovery.HidrawNode
@@ -34,6 +38,61 @@ class OpenDevice:
         self.close()
 
 
+def unsupported_message(mouse: discovery.MouseInfo) -> str:
+    """Почему для этой мыши нельзя выполнить команду HID++."""
+    return t(
+        f"{mouse.name}: у этой модели нет HID++, поэтому DPI, частота опроса и подсветка "
+        "недоступны. Профили, кнопки и макросы работают через evdev — см. mousecfg list.",
+        f"{mouse.name}: this model has no HID++, so DPI, report rate and lighting are "
+        "unavailable. Profiles, buttons and macros work through evdev — see mousecfg list.",
+    )
+
+
+def _hidpp_node(hint: str | None) -> discovery.HidrawNode:
+    if hint:
+        candidates = discovery.find_by_hint(hint)
+        hidpp = [node for node in candidates if node.is_hidpp_candidate]
+        if hidpp:
+            return hidpp[0]
+        mouse = discovery.mouse_for_hint(hint)
+        if mouse is not None and not mouse.supports_hidpp:
+            raise UnsupportedProtocol(unsupported_message(mouse))
+        if candidates:
+            return candidates[0]
+        raise DeviceNotFound(
+            t(
+                f"по подсказке {hint!r} ничего не найдено. Проверьте: lsusb, а также доступ к /dev/hidraw*",
+                f"nothing matched the hint {hint!r}. Check lsusb and access to /dev/hidraw*",
+            )
+        )
+
+    mice = discovery.find_mice()
+    for mouse in mice:
+        if not mouse.supports_hidpp:
+            continue
+        node = discovery.node_by_path(mouse.hidraw_path)
+        if node is not None:
+            return node
+
+    evdev_only = [mouse for mouse in mice if not mouse.supports_hidpp]
+    if evdev_only:
+        names = ", ".join(mouse.name for mouse in evdev_only)
+        raise DeviceNotFound(
+            t(
+                "HID++ мышь не найдена. Подключены мыши без HID++ ("
+                f"{names}) — для них работают профили, кнопки и макросы, "
+                "но не DPI/частота/подсветка. Список: mousecfg list",
+                "no HID++ mouse found. Connected mice lack HID++ ("
+                f"{names}) — profiles, buttons and macros work for them, "
+                "but DPI/report rate/lighting do not. List them with: mousecfg list",
+            )
+        )
+    raise DeviceNotFound(
+        t("не найдено подходящего HID++ устройства. Проверьте: lsusb, а также доступ к /dev/hidraw*",
+          "no suitable HID++ device found. Check lsusb and access to /dev/hidraw*")
+    )
+
+
 def open_device(
     hint: str | None = None,
     *,
@@ -42,25 +101,11 @@ def open_device(
     keep_journal: bool = True,
     device_index: int | None = None,
 ) -> OpenDevice:
-    """Открыть первое подходящее устройство.
+    """Открыть первое подходящее HID++-устройство.
 
     `hint` — путь к hidraw, 'vid:pid', серийник или часть имени.
     """
-    if hint:
-        candidates = discovery.find_by_hint(hint)
-        candidates = [node for node in candidates if node.is_hidpp_candidate] or candidates
-    else:
-        candidates = discovery.logitech_hidpp_nodes()
-        if not candidates:
-            candidates = [node for node in discovery.discover() if node.bus == "usb"]
-
-    if not candidates:
-        raise DeviceNotFound(
-            t("не найдено подходящего HID++ устройства. Проверьте: lsusb, а также доступ к /dev/hidraw*",
-                "no suitable HID++ device found. Check lsusb and access to /dev/hidraw*")
-        )
-
-    node = candidates[0]
+    node = _hidpp_node(hint)
     logger.debug(t("открываю %s", "opening %s"), node.describe())
 
     transport = HidrawTransport(

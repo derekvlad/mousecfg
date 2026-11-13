@@ -15,7 +15,7 @@ GUI (GTK4/libadwaita)   CLI (mousecfg)   трей (GTK3 + AppIndicator3)
          JSON-RPC через UNIX-сокет
                   |
           демон (systemd --user)
-          ├── discovery    — поиск hidraw-узлов Logitech (sysfs)
+          ├── discovery    — поиск мышей в sysfs: HID++ и evdev-only
           ├── profiles     — TOML-схема, хранилище, сопоставление
           ├── apply        — применение профиля, повтор при hotplug
           ├── appwatch     — активное приложение → выбор профиля
@@ -24,6 +24,14 @@ GUI (GTK4/libadwaita)   CLI (mousecfg)   трей (GTK3 + AppIndicator3)
                   |
           hidpp: transport → safeplane → guard → device
 ```
+
+Протоколов два уровня. HID++ (`hidpp/`) даёт DPI, частоту опроса, режим и
+подсветку. Мыши на закрытом вендорском протоколе (например, AJAZZ 2.4G)
+сопровождаются только через evdev: `discovery.find_mice()` группирует hidraw-
+интерфейсы одного устройства, отмечает протокол и находит `event`-узел.
+Для `protocol = "evdev"` демон не открывает hidraw вовсе, а `engine.apply_profile(None, …)`
+пропускает настройки протокола с понятным объяснением; профили, кнопки и
+макросы продолжают работать.
 
 `hidpp/guard.py` и `hidpp/safeplane.py` — ядро требования. Любая отправка
 проходит через `SafePlane.send()`: сначала классификация команды

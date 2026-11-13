@@ -101,3 +101,30 @@ The protocol was verified on a live device:
   among the programmable buttons.
 * Switching back to `On-Board` mode is not supported by the project: it would
   require writing a profile to mouse memory.
+
+## YJX-CHIP AJAZZ 2.4G (a8a5:2255)
+
+Verified 2026-11-13, serial `D1K_251010b271_A72V1`, `bcdDevice 2.71`.
+This mouse speaks a closed vendor protocol: it has no HID++, so the project
+manages it at the evdev level only.
+
+| What | Value |
+|---|---|
+| USB | `a8a5:2255`, 3 interfaces: 0 — mouse, 1 — keyboard/consumer, 2 — vendor HID (usage page `0xFF01`, 64-byte in/out) |
+| hidraw | `/dev/hidraw4/5/6`; the project **never opens** them — that would require reverse-engineering the vendor protocol and a separate udev rule |
+| evdev | `/dev/input/event20` (`uniq` = serial), 8 buttons, two wheels (`REL_WHEEL` and `REL_HWHEEL`) |
+| Protocol | vendor-specific; no HID++ → DPI, report rate, lighting and mode are unavailable |
+| Per-application profiles | work; the device key is `serial:D1K_251010b271_A72V1` |
+| Button remapping and macros | work through evdev/uinput: `data/70-mousecfg-input.rules` is enough, no hidraw rule needed |
+| How it looks in the CLI | `mousecfg list` → `protocol: evdev (no HID++)` and `available: buttons and macros` |
+| Daemon | attaches the mouse, logs `evdev: DPI, report rate and lighting are unavailable`, and `mousecfg devices` / `status` list it |
+| Protocol commands | `get`, `set-dpi`, `set-rate`, `lighting`, `mode` return a clear error and send nothing |
+
+### Limitations
+
+* DPI, report rate and lighting cannot be changed: the protocol is closed and the
+  project never writes to onboard memory. These settings are only available
+  through the vendor software or the buttons on the mouse itself.
+* Interface 2 (`usage page 0xFF01`) is not used and is never opened.
+* The `On-Board → Host` switch, HID++ features and `RGB_EFFECTS` lighting do not
+  apply to these mice — in `mousecfg judge` they remain HID++-only.

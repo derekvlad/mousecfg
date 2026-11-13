@@ -56,9 +56,40 @@ def plan_button_actions(profile: Profile) -> dict[str, str]:
     return plan
 
 
-def apply_profile(device: HidppDevice, profile: Profile) -> ApplyResult:
-    """Применить волатильную часть профиля."""
+def apply_profile(device: HidppDevice | None, profile: Profile) -> ApplyResult:
+    """Применить волатильную часть профиля.
+
+    `device=None` — мышь без HID++ (управляется только через evdev): настройки
+    протокола (DPI, частота, подсветка) недоступны, но профиль считается
+    выбранным, а кнопки и макросы продолжает применять evdev-слой.
+    """
     result = ApplyResult(profile_id=profile.id)
+
+    if device is None:
+        if profile.dpi is not None:
+            result.skipped.append(
+                t(
+                    "DPI: у модели нет HID++, остаётся только значение в профиле",
+                    "DPI: the model has no HID++, only the value in the profile remains",
+                )
+            )
+        if profile.report_rate_ms is not None:
+            result.skipped.append(
+                t(
+                    "частота опроса: у модели нет HID++, настраивается только самой мышью",
+                    "report rate: the model has no HID++, it is set on the mouse itself",
+                )
+            )
+        if profile.lighting:
+            result.skipped.append(
+                t(
+                    "подсветка: у модели нет HID++, управляется только самой мышью",
+                    "lighting: the model has no HID++, it is controlled on the mouse itself",
+                )
+            )
+        if profile.buttons:
+            result.skipped.append(t("кнопки применяет evdev-слой (см. mousecfg run-profile)", "buttons are applied by the evdev layer (see mousecfg run-profile)"))
+        return result
 
     if profile.dpi is not None:
         try:

@@ -72,7 +72,7 @@ def _build_parser() -> argparse.ArgumentParser:
 
     sub = parser.add_subparsers(dest="command", required=True)
 
-    sub.add_parser("list", parents=[common], help=t("показать найденные HID++ устройства", "show discovered HID++ devices"))
+    sub.add_parser("list", parents=[common], help=t("показать мыши, их протокол и доступные настройки", "show mice, their protocol and available settings"))
     sub.add_parser("judge", parents=[common], help=t("показать политику: что разрешено, что запрещено", "show the policy: what is allowed and what is denied"))
     sub.add_parser("get", parents=[common], help=t("прочитать имя, прошивку, DPI, report rate, режим", "read name, firmware, DPI, report rate and mode"))
 
@@ -214,21 +214,46 @@ def _dump(data: dict, as_json: bool) -> None:
 
 
 def cmd_list(args: argparse.Namespace) -> int:
-    nodes = discovery.discover(include_all=bool(args.verbose))
+    mice = discovery.find_mice()
     if args.json:
-        print(json.dumps([node.__dict__ for node in nodes], ensure_ascii=False, indent=2))
+        from dataclasses import asdict
+
+        payload = []
+        for mouse in mice:
+            item = asdict(mouse)
+            item["capabilities"] = sorted(mouse.capabilities)
+            payload.append(item)
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
         return 0
-    if not nodes:
-        print(t("Устройства Logitech не найдены.", "No Logitech devices found."))
+    if not mice:
+        print(t("Мыши не найдены.", "No mice found."))
         return 1
-    print(t("Logitech HID++ устройства:", "Logitech HID++ devices:"))
-    for node in nodes:
-        marks = []
-        if node.is_hidpp_candidate:
-            marks.append("HID++ if01")
-        if not marks:
-            marks.append(t("не HID++ кандидат", "not a HID++ candidate"))
-        print(f"  {node.describe()}  ({', '.join(marks)})")
+
+    names = {
+        "dpi": "DPI",
+        "report_rate": t("частота опроса", "report rate"),
+        "lighting": t("подсветка", "lighting"),
+        "mode": "Host/On-Board",
+        "buttons": t("кнопки и макросы", "buttons and macros"),
+    }
+    print(t("Мыши:", "Mice:"))
+    for mouse in mice:
+        print(f"  {mouse.describe()}")
+        capabilities = ", ".join(names.get(item, item) for item in sorted(mouse.capabilities))
+        print(t(f"    доступно: {capabilities}", f"    available: {capabilities}"))
+        if not mouse.supports_hidpp:
+            print(
+                t(
+                    "    без HID++: профили, кнопки и макросы — через evdev; DPI/частота/подсветка недоступны",
+                    "    no HID++: profiles, buttons and macros go through evdev; DPI/report rate/lighting are unavailable",
+                )
+            )
+
+    if args.verbose:
+        print(t("\nВсе hidraw-узлы:", "\nAll hidraw nodes:"))
+        for node in discovery.discover(include_all=True):
+            marks = ["HID++ if01"] if node.is_hidpp_candidate else [t("не HID++ кандидат", "not a HID++ candidate")]
+            print(f"  {node.describe()}  ({', '.join(marks)})")
     return 0
 
 
@@ -912,11 +937,11 @@ def _device_profiles_file(args: argparse.Namespace) -> Path | None:
                 break
 
     # Демона нет: определяем файл по имени устройства.
-    nodes = discovery.discover()
-    if not nodes:
+    mice = discovery.find_mice()
+    if not mice:
         print(t("Устройство не найдено: укажите --profile-file", "Device not found: specify --profile-file"), file=sys.stderr)
         return None
-    node = nodes[0]
+    node = mice[0]
     return config.profiles_dir() / f"{daemon_module._slug(node.name)}.toml"
 
 
@@ -1058,6 +1083,11 @@ def cmd_status(args: argparse.Namespace) -> int:
             f"  {device['name']} | профиль: {device.get('active_profile') or '-'} | режим: {device.get('mode') or '-'}",
             f"  {device['name']} | profile: {device.get('active_profile') or '-'} | mode: {device.get('mode') or '-'}",
         ))
+        if device.get("protocol") == "evdev":
+            print(t(
+                "    управление: evdev (без HID++; DPI, частота и подсветка недоступны)",
+                "    managed via: evdev (no HID++; DPI, report rate and lighting are unavailable)",
+            ))
         if device.get("last_error"):
             print(t(f"    ошибка: {device['last_error']}", f"    error: {device['last_error']}"))
         for name, action in (device.get("buttons_plan") or {}).items():
@@ -1084,6 +1114,8 @@ def cmd_devices(args: argparse.Namespace) -> int:
 
 def registry_line(device: dict) -> str:
     bits = [device.get("name") or device.get("usb_id") or "?"]
+    if device.get("protocol") == "evdev":
+        bits.append("evdev")
     if device.get("active_profile"):
         bits.append(t(f"профиль {device['active_profile']}", f"profile {device['active_profile']}"))
     if device.get("mode"):
@@ -1283,6 +1315,9 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         return handler(args)
+    except session.UnsupportedProtocol as exc:
+        print(exc, file=sys.stderr)
+        return 1
     except session.DeviceNotFound as exc:
         print(exc, file=sys.stderr)
         return 1
