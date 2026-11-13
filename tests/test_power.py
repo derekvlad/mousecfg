@@ -33,3 +33,32 @@ def test_battery_icon_thresholds(percent: int, expected_icon: str) -> None:
 @pytest.mark.parametrize("value", [None, "", 101, -1, True, 1.5, []])
 def test_battery_hides_for_unknown_values(value: object) -> None:
     assert battery_display(value) is None
+
+
+def test_hover_title_includes_battery_profile_and_name() -> None:
+    from mousecfg.power import hover_title
+
+    title = hover_title(name="YJX-CHIP AJAZZ 2.4G Mouse", profile="default", percent=78)
+
+    assert title.startswith("mousecfg")
+    assert "заряд: 78%" in title
+    assert "default" in title
+    assert "AJAZZ" in title
+
+
+def test_hover_title_without_battery_still_shows_placeholder() -> None:
+    from mousecfg.power import hover_title
+
+    title = hover_title(name="Mouse", profile="", percent=None)
+
+    assert "заряд: —" in title
+    assert "Mouse" in title
+    assert " ·  · " not in title  # пустые поля не оставляют двойных разделителей
+
+
+def test_hover_title_skips_empty_name() -> None:
+    from mousecfg.power import hover_title
+
+    title = hover_title(name="", profile="default", percent=50)
+
+    assert title == "mousecfg · default · заряд: 50%"

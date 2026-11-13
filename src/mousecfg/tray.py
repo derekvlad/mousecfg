@@ -30,7 +30,7 @@ gi.require_version("AppIndicator3", "0.1")
 from gi.repository import AppIndicator3, GLib, Gtk  # noqa: E402
 
 from mousecfg import hotkeys, ipc  # noqa: E402
-from mousecfg.power import battery_display  # noqa: E402
+from mousecfg.power import battery_display, hover_title  # noqa: E402
 
 logger = logging.getLogger(__name__)
 
@@ -121,8 +121,11 @@ class Tray:
         self.device_item.set_sensitive(False)
         menu.append(self.device_item)
 
-        self.battery_item = Gtk.MenuItem(label=t("заряд: —", "battery: —"))
+        # ImageMenuItem, а не MenuItem: только у него есть значок в GTK3.
+        self.battery_item = Gtk.ImageMenuItem(label=t("заряд: —", "battery: —"))
         self.battery_item.set_sensitive(False)
+        self.battery_image = Gtk.Image()
+        self.battery_item.set_image(self.battery_image)
         menu.append(self.battery_item)
 
         menu.append(Gtk.SeparatorMenuItem())
@@ -171,6 +174,7 @@ class Tray:
     def _apply_status(self, status: object) -> bool:
         if not isinstance(status, dict) or not status.get("devices"):
             self.header_item.set_label(t("mousecfg — демон недоступен", "mousecfg — daemon unavailable"))
+            self.indicator.set_title(t("mousecfg — демон недоступен", "mousecfg — daemon unavailable"))
             self._set_profile_items([])
             return False
 
@@ -184,7 +188,22 @@ class Tray:
         self._set_battery(device.get("battery_percent"))
         self.remap_item.set_label(t(f"Кнопки: {'включены' if self.remap_enabled else 'выключены'}", f"Buttons: {'enabled' if self.remap_enabled else 'disabled'}"))
         self._set_profile_items(list(device.get("profiles") or []), active=active)
+        self._set_hover_title(device, active=active)
         return False
+
+    def _set_hover_title(self, device: dict, *, active: str) -> None:
+        """Текст при наведении на значок трея.
+
+        Панели (в частности noctalia) показывают `Title` этого
+        StatusNotifierItem, поэтому заряд кладём именно туда:
+        `mousecfg · default · заряд 78% · <устройство>`.
+        """
+        title = hover_title(
+            name=str(device.get("name") or device.get("key") or ""),
+            profile=active,
+            percent=device.get("battery_percent"),
+        )
+        self.indicator.set_title(title)
 
     def _set_battery(self, percent: object) -> None:
         """Показать заряд (только если демон его прочитал)."""
@@ -196,7 +215,11 @@ class Tray:
         label, icon = info
         self.battery_item.set_label(label)
         self.battery_item.set_visible(True)
-        self.battery_item.set_icon_from_icon_name(icon)
+        self._set_item_icon(icon)
+
+    def _set_item_icon(self, icon: str) -> None:
+        """Значок пункта меню GTK3 (у обычного MenuItem его нет вовсе)."""
+        self.battery_image.set_from_icon_name(icon, Gtk.IconSize.MENU)
 
     def _set_profile_items(self, profile_ids: list[str], *, active: str = "") -> None:
         for child in self.profile_menu.get_children():

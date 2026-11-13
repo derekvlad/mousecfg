@@ -29,4 +29,22 @@ def battery_display(percent: object) -> tuple[str, str] | None:
     return t(f"заряд: {percent}%", f"battery: {percent}%"), icon
 
 
-__all__ = ["battery_display"]
+def hover_title(name: str = "", profile: str = "", percent: object = None) -> str:
+    """Текст всплывающей подсказки значка трея.
+
+    Панели (в частности noctalia) показывают `Title` элемента
+    StatusNotifierItem, поэтому заряд кладём именно туда. Пустые куски
+    пропускаем, чтобы не было двойных разделителей.
+    """
+    info = battery_display(percent)
+    battery = info[0] if info is not None else t("заряд: —", "battery: —")
+    parts = ["mousecfg"]
+    if profile and profile != "—":
+        parts.append(profile)
+    parts.append(battery)
+    if name:
+        parts.append(name)
+    return " · ".join(parts)
+
+
+__all__ = ["battery_display", "hover_title"]

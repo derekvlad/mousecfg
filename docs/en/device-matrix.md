@@ -140,6 +140,11 @@ daemon keeps the last 5 values and shows the median — otherwise the tray icon
 would flicker across the thresholds. For the same models the SDK calls command
 `0x30` "battery and USB", and the 0..100 range is the only sensible reading.
 
+The battery is shown in the tray: in the menu as a "battery: N%" row and in the
+hover tooltip. The panel takes the tooltip from the `Title` property of the
+StatusNotifierItem (in noctalia — `formatTrayItemTooltip`), so the daemon updates
+`Title` together with the battery.
+
 `current_level` in the `0e/a5` reply (byte 4) is the active DPI level; `mousecfg
 get` shows it as `dpi`, and `dpi_levels` as the list. The configuration tail
 (`01 0a 0a ff …` — LOD, sensor, sleep mode) is not decoded yet and stays in the
