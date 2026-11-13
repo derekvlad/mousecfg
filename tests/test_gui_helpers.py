@@ -109,3 +109,66 @@ def _all_groups(page) -> list:
             stack.append(child)
             child = child.get_next_sibling()
     return groups
+
+
+def test_onboard_selection_survives_status_refresh() -> None:
+    """Выбор уровня и правка DPI не сбрасываются фоновым обновлением.
+
+    Регрессия: каждые 2 секунды приходил status/onboard-info и возвращал
+    уровень и значение к прочитанным с мыши, поэтому записать уровень 1..5
+    было нельзя — всё время возвращалось на активный (последний).
+    """
+    import gi
+
+    gi.require_version("Adw", "1")
+    from gi.repository import Adw, Gtk
+
+    from mousecfg.gui.window import MainWindow
+
+    app = Adw.Application(application_id="io.github.mousecfg.TestSel")
+    if not Gtk.init_check():
+        pytest.skip("нет дисплея")
+    window = MainWindow(app)
+    window.onboard_changes = {
+        "dpi_levels": [400, 800, 1200, 1600, 2400, 2900],
+        "dpi_index": 5,
+    }
+    window.onboard_editing = False
+    window._sync_onboard_values(window.onboard_changes)  # noqa: SLF001
+
+    # Пользователь выбирает уровень 1 и задаёт значение.
+    window.onboard_level_row.set_selected(0)
+    window.onboard_dpi_row.set_value(900.0)
+    assert window.onboard_editing is True
+
+    # Приходит фоновое обновление — оно не должно тронуть выбор.
+    window._on_onboard_info(  # noqa: SLF001
+        {"consent": True, "changes": {"dpi_levels": [400, 800, 1200, 1600, 2400, 2900], "dpi_index": 5}}
+    )
+
+    assert window.onboard_level_row.get_selected() == 0
+    assert int(window.onboard_dpi_row.get_value()) == 900
+    assert window.onboard_write_button.get_sensitive() is True
+
+
+def test_onboard_inactive_level_write_is_allowed() -> None:
+    """Можно писать в неактивный уровень: кнопка активна при отличии значения."""
+    import gi
+
+    gi.require_version("Adw", "1")
+    from gi.repository import Adw, Gtk
+
+    from mousecfg.gui.window import MainWindow
+
+    app = Adw.Application(application_id="io.github.mousecfg.TestLevel")
+    if not Gtk.init_check():
+        pytest.skip("нет дисплея")
+    window = MainWindow(app)
+    window.onboard_changes = {"dpi_levels": [400, 800, 1200, 1600, 2400, 2900], "dpi_index": 5}
+    window.onboard_editing = False
+    window._sync_onboard_values(window.onboard_changes)  # noqa: SLF001
+
+    window.onboard_level_row.set_selected(0)  # уровень 1, сейчас 400
+    window.onboard_dpi_row.set_value(900.0)
+
+    assert window.onboard_write_button.get_sensitive() is True

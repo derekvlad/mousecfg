@@ -145,6 +145,8 @@ class MainWindow(Adw.ApplicationWindow):
         self.vendor_path = ""
         self.onboard_consent = False
         self.onboard_changes: dict = {}
+        # Пользователь правит группу «Память мыши» и ещё не записал.
+        self.onboard_editing = False
         self._pending_onboard_action = None
 
         self._build_ui()
@@ -393,12 +395,14 @@ class MainWindow(Adw.ApplicationWindow):
         self.onboard_dpi_row = Adw.SpinRow.new_with_range(100, 30000, 50)
         self.onboard_dpi_row.set_title(t("DPI в памяти мыши", "DPI in mouse memory"))
         self.onboard_dpi_row.set_subtitle(t("Запишется в мышь, а не только в рантайм", "Written to the mouse, not just the runtime"))
+        self.onboard_dpi_row.connect("notify::value", self._on_onboard_dpi_changed)
         self.onboard_group.add(self.onboard_dpi_row)
 
         self.onboard_level_row = Adw.ComboRow(title=t("Уровень DPI", "DPI level"))
         self.onboard_level_row.set_model(
             Gtk.StringList.new([t(f"Уровень {index + 1}", f"Level {index + 1}") for index in range(6)])
         )
+        self.onboard_level_row.connect("notify::selected", self._on_onboard_level_changed)
         self.onboard_group.add(self.onboard_level_row)
 
         self.onboard_info_row = Adw.ActionRow(title=t("Прочитано с мыши", "Read from the mouse"), subtitle="—")
@@ -436,7 +440,7 @@ class MainWindow(Adw.ApplicationWindow):
             t("Записать DPI в мышь", "Write DPI to the mouse") if self.onboard_consent
             else t("Разрешить запись…", "Allow writing…")
         )
-        self.onboard_write_button.set_sensitive(bool(self.onboard_changes))
+        self._update_onboard_status()
 
     def _refresh_onboard(self) -> None:
         """Прочитать настройки памяти мыши по вендорскому каналу (без записи)."""
@@ -450,32 +454,99 @@ class MainWindow(Adw.ApplicationWindow):
         )
 
     def _on_onboard_info(self, payload: object) -> None:
+        """Ответ демона на чтение настроек памяти мыши.
+
+        Если пользователь уже что-то правил в группе (не записано), значения
+        из ответа не применяем — иначе выбор сбрасывался бы каждые 2 секунды.
+        """
         data = dict(payload)  # type: ignore[arg-type]
-        self.onboard_changes = dict(data.get("changes") or {})
         self.onboard_consent = bool(data.get("consent", self.onboard_consent))
-        self.onboard_write_button.set_sensitive(bool(self.onboard_changes))
+        self.onboard_write_button.set_label(
+            t("Записать DPI в мышь", "Write DPI to the mouse") if self.onboard_consent
+            else t("Разрешить запись…", "Allow writing…")
+        )
+        if self._onboard_user_editing():
+            return
+        self.onboard_changes = dict(data.get("changes") or {})
         self._sync_onboard_values(self.onboard_changes)
 
-    def _sync_onboard_values(self, changes: dict) -> None:
-        """Показать прочитанные значения, не отправив случайную запись."""
+    def _on_onboard_info(self, payload: object) -> None:
+        """Ответ демона на чтение настроек памяти мыши.
+
+        Пока пользователь правит группу (выбрал уровень или поменял значение)
+        и ещё не записал, автообновление не перетирает его выбор: иначе каждые
+        пару секунд уровень и значение возвращались бы к прочитанным с мыши.
+        """
+        data = dict(payload)  # type: ignore[arg-type]
+        self.onboard_consent = bool(data.get("consent", self.onboard_consent))
+        self.onboard_write_button.set_label(
+            t("Записать DPI в мышь", "Write DPI to the mouse") if self.onboard_consent
+            else t("Разрешить запись…", "Allow writing…")
+        )
+        self.onboard_changes = dict(data.get("changes") or {})
+        self._sync_onboard_values(self.onboard_changes, preserve_selection=self.onboard_editing)
+
+    def _on_onboard_level_changed(self, _row: Adw.ComboRow, _pspec: object) -> None:
+        """Пользователь выбрал уровень: показать его значение, не записывая."""
+        if self._suppress:
+            return
+        self.onboard_editing = True
+        levels = self.onboard_changes.get("dpi_levels") or []
+        index = int(self.onboard_level_row.get_selected())
+        if 0 <= index < len(levels):
+            self._suppress = True
+            try:
+                self.onboard_dpi_row.set_value(float(levels[index]))
+            finally:
+                self._suppress = False
+        self._update_onboard_status()
+
+    def _on_onboard_dpi_changed(self, _row: Adw.SpinRow, _pspec: object) -> None:
+        if self._suppress:
+            return
+        self.onboard_editing = True
+        self._update_onboard_status()
+
+    def _update_onboard_status(self) -> None:
+        levels = self.onboard_changes.get("dpi_levels") or []
+        index = int(self.onboard_level_row.get_selected())
+        active = int(self.onboard_changes.get("dpi_index") or 0)
+        value = int(self.onboard_dpi_row.get_value())
+        parts = [t(f"Уровни: {', '.join(str(item) for item in levels)}", f"Levels: {', '.join(str(item) for item in levels)}")]
+        if index == active:
+            parts.append(t("активный", "active"))
+        else:
+            parts.append(t(f"сейчас активен уровень {active + 1}", f"level {active + 1} is active now"))
+        self.onboard_info_row.set_subtitle("  ·  ".join(parts))
+        stored = levels[index] if 0 <= index < len(levels) else None
+        self.onboard_write_button.set_sensitive(stored is not None and value != stored)
+
+    def _sync_onboard_values(self, changes: dict, *, preserve_selection: bool = False) -> None:
+        """Показать прочитанные значения, не отправив случайную запись.
+
+        `preserve_selection` — не трогать выбор уровня и текущее значение
+        (пользователь как раз их правит).
+        """
         levels = changes.get("dpi_levels") or []
-        index = int(changes.get("dpi_index") or 0)
+        if not levels:
+            return
+        active = int(changes.get("dpi_index") or 0)
+        wanted = int(self.onboard_level_row.get_selected()) if preserve_selection else active
+        wanted = min(max(wanted, 0), len(levels) - 1)
         self._suppress = True
         try:
-            count = min(len(levels) or len(changes.get("dpi_levels") or []) or 6, 6)
-            labels = [t(f"Уровень {i + 1}: {levels[i]}", f"Level {i + 1}: {levels[i]}") for i in range(count)]
+            labels = [
+                t(f"Уровень {i + 1}: {levels[i]}", f"Level {i + 1}: {levels[i]}")
+                + (t("  (активный)", "  (active)") if i == active else "")
+                for i in range(len(levels))
+            ]
             self.onboard_level_row.set_model(Gtk.StringList.new(labels))
-            if 0 <= index < count:
-                self.onboard_level_row.set_selected(index)
-            if 0 <= index < len(levels):
-                self.onboard_dpi_row.set_value(float(levels[index]))
+            self.onboard_level_row.set_selected(wanted)
+            if not preserve_selection:
+                self.onboard_dpi_row.set_value(float(levels[active]))
         finally:
             self._suppress = False
-        if levels:
-            levels_text = ", ".join(str(item) for item in levels)
-            self.onboard_info_row.set_subtitle(
-                t(f"Уровни: {levels_text}", f"Levels: {levels_text}")
-            )
+        self._update_onboard_status()
 
     # -- память мыши: снимок / запись ------------------------------------
     def _on_onboard_backup(self) -> None:
@@ -506,13 +577,17 @@ class MainWindow(Adw.ApplicationWindow):
         value = int(self.onboard_dpi_row.get_value())
         self._onboard_confirm(lambda: self.client.call_async(
             "onboard-apply",
-            on_done=lambda result: self._toast(str(result)),
+            on_done=self._on_onboard_written,
             on_error=self._on_error,
             device=self.device_key,
             confirm=True,
             dpi=value,
             dpi_level=level,
         ))
+
+    def _on_onboard_written(self, result: object) -> None:
+        self.onboard_editing = False
+        self._toast(str(result))
 
     def _onboard_confirm(self, action) -> None:
         """Выполнить действие записи, при необходимости спросив согласие.
