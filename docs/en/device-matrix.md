@@ -111,23 +111,40 @@ manages it at the evdev level only.
 | What | Value |
 |---|---|
 | USB | `a8a5:2255`, 3 interfaces: 0 — mouse, 1 — keyboard/consumer, 2 — vendor HID (usage page `0xFF01`, 64-byte in/out) |
-| hidraw | `/dev/hidraw4/5/6`; the project **never opens** them — that would require reverse-engineering the vendor protocol and a separate udev rule |
+| hidraw | `/dev/hidraw4/5/6`; the daemon never opens them, the vendor node (`/dev/hidraw6`) is read only on an explicit command |
 | evdev | `/dev/input/event20` (`uniq` = serial), 8 buttons, two wheels (`REL_WHEEL` and `REL_HWHEEL`) |
-| Protocol | vendor-specific; no HID++ → DPI, report rate, lighting and mode are unavailable |
+| Protocol | vendor-specific (`mkespn` dialect); no HID++ |
 | Per-application profiles | work; the device key is `serial:D1K_251010b271_A72V1` |
 | Button remapping and macros | work through evdev/uinput: `data/70-mousecfg-input.rules` is enough, no hidraw rule needed |
 | How it looks in the CLI | `mousecfg list` → `protocol: evdev (no HID++)` and `available: buttons and macros` |
 | Daemon | attaches the mouse, logs `evdev: DPI, report rate and lighting are unavailable`, and `mousecfg devices` / `status` list it |
-| Protocol commands | `get`, `set-dpi`, `set-rate`, `lighting`, `mode` return a clear error and send nothing |
+| Protocol commands | `set-dpi`, `set-rate`, `lighting`, `mode` return a clear error and send nothing |
 | Vendor channel | interface 2 (`usage page 0xFF01`, 64-byte in/out); the project opens it **read-only** — `mousecfg vendor [--probe]` |
 | YJX protocol | reverse-engineered by the community: frame `55 cmd sub chk len off_lo off_hi page data…`, reply `aa …`. Read commands: `03/00` identification, `08/a5` mode pages, `0e/a5` DPI/report rate/lighting, `30/a5`, `fa/ae` |
 | Why we never write | writing the configuration goes straight to onboard flash, and `0d/00` with a non-empty body clears a range of memory. The `vendor/guard.py` policy refuses every write frame before it is sent |
 
+### What could actually be read (2026-11-13)
+
+A live run of `mousecfg vendor --probe` on this mouse. All replies are read-only:
+
+| What | Raw look | Value |
+|---|---|---|
+| Identification `03/00` | `YJX.co.mouse` `271220` `Nov 12 2025 18:49:27` `Feb 20 2024 20:18:19` | model `YJX.co.mouse`, code `271220`, two firmware build dates |
+| Configuration `0e/a5` | `00 00 04 06 05 90 01 20 03 b0 04 40 06 60 09 80 0c …` | 6 DPI levels: **400 / 800 / 1200 / 1600 / 2400 / 3200**, current **2400**, report rate **1000 Hz** (code `04`), lighting off (`00`) |
+| Serial `fa/ae` | eight zero bytes | not populated on this model |
+| State `30/a5` | 10 bytes, the first one varies (`4d`, `51`) | not interpreted without a field description |
+
+`current_level` in the `0e/a5` reply (byte 4) is the active DPI level; `mousecfg
+get` shows it as `dpi`, and `dpi_levels` as the list. The configuration tail
+(`01 0a 0a ff …` — LOD, sensor, sleep mode) is not decoded yet and stays in the
+raw dump. **DPI/report rate cannot be changed from Linux**: every write command
+is refused by the project policy.
+
 ### Limitations
 
-* DPI, report rate and lighting cannot be changed: the protocol is closed and the
-  project never writes to onboard memory. These settings are only available
-  through the vendor software or the buttons on the mouse itself.
+* DPI, report rate and lighting **can be read**, but not changed: the protocol
+  is closed and the project never writes to onboard memory. These settings are
+  only available through the vendor software or the buttons on the mouse itself.
 * Interface 2 (`usage page 0xFF01`) is opened read-only (`mousecfg vendor`). It
   needs access to this mouse's `/dev/hidraw*`: the `data/60-mousecfg.rules` rule
   plus `sudo udevadm trigger --subsystem-match=hidraw`. Without the rule only

@@ -107,3 +107,34 @@ def test_input_mouse_rule_matches_expected_node():
     assert 'SUBSYSTEM=="input"' in rule
     assert 'KERNEL=="event*"' in rule
     assert 'ENV{ID_INPUT_MOUSE}=="1"' in rule
+
+
+def test_hidraw_interface_number_uses_env_not_attrs():
+    """Номер интерфейса нельзя проверять через ATTRS вместе с idVendor.
+
+    `bInterfaceNumber` есть только у узла интерфейса, а `idVendor`/
+    `idProduct` — у родительского USB-устройства, и udev раскрывает ATTRS по
+    одному устройству. Правило `ATTRS{idVendor}=="a8a5", ATTRS{bInterfaceNumber}=="02"`
+    не совпадает никогда — ACL молча не появляется (проверяется `udevadm test -v`).
+    """
+    for name in RULE_FILES:
+        for rule in _logical_lines(DATA / name):
+            assert 'ATTRS{bInterfaceNumber}' not in rule, (
+                f"{name}: bInterfaceNumber нужно брать из ENV{{ID_USB_INTERFACE_NUM}}: {rule!r}"
+            )
+
+
+def test_interface_number_rules_import_usb_id_first():
+    """ENV{ID_USB_INTERFACE_NUM} появляется только после builtin usb_id."""
+    lines = _logical_lines(DATA / "60-mousecfg.rules")
+    uses_env = [rule for rule in lines if 'ENV{ID_USB_INTERFACE_NUM}' in rule]
+    assert uses_env, "нет ни одного правила по номеру интерфейса"
+    import_index = next(
+        (index for index, rule in enumerate(lines) if 'IMPORT{builtin}="usb_id"' in rule),
+        None,
+    )
+    assert import_index is not None, "нет IMPORT{builtin}=\"usb_id\""
+    first_env = min(lines.index(rule) for rule in uses_env)
+    assert import_index < first_env, (
+        "IMPORT{builtin}=\"usb_id\" должен стоять до условий по ID_USB_INTERFACE_NUM"
+    )

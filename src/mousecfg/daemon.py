@@ -316,8 +316,8 @@ class Daemon:
 
         logger.info(
             t(
-                "подключено: %s (evdev: DPI, частота и подсветка недоступны)",
-                "connected: %s (evdev: DPI, report rate and lighting are unavailable)",
+                "подключено: %s (evdev: DPI/частота/подсветка задаются самой мышью)",
+                "connected: %s (evdev: DPI/report rate/lighting are set on the mouse itself)",
             ),
             state.name,
         )

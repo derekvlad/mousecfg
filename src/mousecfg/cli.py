@@ -15,6 +15,7 @@ from .hidpp import guard
 from .hidpp.protocol import DeviceError, FeatureUnsupportedError, ProtocolError, TransportError
 from .i18n import t
 from .input import detect as input_detect
+from .vendor import guard as vendor_guard
 from .vendor.guard import VendorRefused
 
 LOG = logging.getLogger("mousecfg")
@@ -260,8 +261,8 @@ def cmd_list(args: argparse.Namespace) -> int:
         if not mouse.supports_hidpp:
             print(
                 t(
-                    "    без HID++: профили, кнопки и макросы — через evdev; DPI/частота/подсветка недоступны",
-                    "    no HID++: profiles, buttons and macros go through evdev; DPI/report rate/lighting are unavailable",
+                    "    без HID++: профили, кнопки и макросы — через evdev; DPI/частота/подсветка меняются только самой мышью",
+                    "    no HID++: profiles, buttons and macros go through evdev; DPI/report rate/lighting are set on the mouse itself",
                 )
             )
         if mouse.vendor_path:
@@ -280,6 +281,17 @@ def cmd_list(args: argparse.Namespace) -> int:
                 marks.append(t("вендорский канал", "vendor channel"))
             print(f"  {node.describe()}  ({', '.join(marks)})")
     return 0
+
+
+def vendor_audit() -> list[str]:
+    """Сводка политики вендорского канала — для `mousecfg judge`."""
+    lines: list[str] = [t("разрешено (чтение):", "allowed (read):")]
+    for (cmd, sub), purpose in sorted(vendor_guard.MKESPN_READS.items()):
+        lines.append(f"  {cmd:02x}/{sub:02x} {purpose}")
+    lines.append(t("запрещено (запись в память):", "denied (writes to memory):"))
+    for cmd, purpose in sorted(vendor_guard.MKESPN_WRITES.items()):
+        lines.append(f"  {cmd:02x}/* {purpose}")
+    return lines
 
 
 def cmd_judge(args: argparse.Namespace) -> int:
@@ -305,12 +317,66 @@ def cmd_judge(args: argparse.Namespace) -> int:
         print(f"\n{titles[key]}")
         for line in audit.get(key, []):
             print(f"  {line}")
+    print(t("\nВендорский канал (мыши без HID++, например AJAZZ): только чтение", "\nVendor channel (mice without HID++, e.g. AJAZZ): read-only"))
+    for line in vendor_audit():
+        print(f"  {line}")
     print(t("\nВсё остальное считается запрещённым: неизвестная команда не отправится никогда.",
             "\nEverything else is considered denied: an unknown command is never sent."))
     return 0
 
 
+def _get_evdev_device(mouse: discovery.MouseInfo, args: argparse.Namespace) -> int:
+    """Карточка мыши без HID++: что известно, и read-only данные вендора."""
+    data: dict = {
+        "device": mouse.name,
+        "usb_id": mouse.usb_id,
+        "key": mouse.key,
+        "serial": mouse.serial,
+        "protocol": t("evdev (без HID++; DPI, частота и подсветка задаются самой мышью)", "evdev (no HID++; DPI, report rate and lighting are set on the mouse itself)"),
+        "input": mouse.input_path,
+    }
+    if mouse.vendor_path:
+        from .vendor.device import VendorDevice
+
+        try:
+            with VendorDevice(mouse.vendor_path) as device:
+                probe = device.probe()
+        except OSError as exc:
+            data["vendor"] = t(
+                f"канал {mouse.vendor_path} недоступен ({exc}); для чтения нужно правило udev",
+                f"channel {mouse.vendor_path} is unavailable ({exc}); reading needs a udev rule",
+            )
+        else:
+            data["vendor"] = t(
+                f"{probe.path} — только чтение, ничего не записано",
+                f"{probe.path} — read-only, nothing was written",
+            )
+            data["vendor_dialect"] = probe.dialect
+            if probe.device is not None:
+                data["vendor_model"] = probe.device.model
+                data["vendor_code"] = probe.device.code
+                data["vendor_firmware_dates"] = probe.device.firmware_dates
+            if probe.dpi is not None and probe.dpi.levels:
+                data["dpi"] = probe.dpi.current_dpi
+                data["dpi_levels"] = probe.dpi.levels
+                data["report_rate_hz"] = probe.dpi.poll_rate_hz
+                data["dpi_source"] = t("прочитано с мыши, изменить из Linux нельзя", "read from the mouse, cannot be changed from Linux")
+    _dump(data, args.json)
+    return 0
+
+
 def cmd_get(args: argparse.Namespace) -> int:
+    # Сначала смотрим, о какой мыши речь: у модели без HID++ вендорский
+    # канал (если он есть) даёт больше, чем отказ протокольной команды.
+    mouse = discovery.mouse_for_hint(args.device) if args.device else None
+    if mouse is None and not args.device:
+        mice = discovery.find_mice()
+        mouse = next((item for item in mice if item.supports_hidpp), None)
+        if mouse is None and len(mice) == 1:
+            mouse = mice[0]
+    if mouse is not None and not mouse.supports_hidpp:
+        return _get_evdev_device(mouse, args)
+
     with session.open_device(args.device, allow_onboard_switch=args.allow_onboard_switch, dry_run=args.dry_run) as opened:
         device = opened.device
         data: dict = {"device": opened.node.describe(), "serial": opened.node.serial}
@@ -381,10 +447,14 @@ def cmd_vendor(args: argparse.Namespace) -> int:
     print(t(f"Мышь: {mouse.name}  [{mouse.usb_id}]", f"Mouse: {mouse.name}  [{mouse.usb_id}]"))
     print(t(f"Вендорский канал: {probe.path} (только чтение)", f"Vendor channel: {probe.path} (read-only)"))
     print(t(f"Диалект: {probe.dialect}", f"Dialect: {probe.dialect}"))
-    if probe.identification:
+    if probe.device is not None:
+        print(t(f"Идентификация: {probe.device.describe()}", f"Identification: {probe.device.describe()}"))
+    elif probe.identification:
         print(t(f"Идентификация: {probe.identification}", f"Identification: {probe.identification}"))
     if probe.version:
         print(t(f"Версия прошивки: {probe.version}", f"Firmware version: {probe.version}"))
+    if probe.dpi is not None and probe.dpi.levels:
+        print(t(f"Настройки: {probe.dpi.describe()}", f"Settings: {probe.dpi.describe()}"))
     if probe.responses:
         print(t("Ответы на читающие команды:", "Replies to the read commands:"))
         for response in probe.responses:
@@ -1164,8 +1234,8 @@ def cmd_status(args: argparse.Namespace) -> int:
         ))
         if device.get("protocol") == "evdev":
             print(t(
-                "    управление: evdev (без HID++; DPI, частота и подсветка недоступны)",
-                "    managed via: evdev (no HID++; DPI, report rate and lighting are unavailable)",
+                "    управление: evdev (без HID++; DPI/частота/подсветка меняются только самой мышью)",
+                "    managed via: evdev (no HID++; DPI/report rate/lighting are set on the mouse itself)",
             ))
         if "vendor-read" in (device.get("capabilities") or []):
             print(t(

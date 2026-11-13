@@ -7,9 +7,13 @@
 
 from __future__ import annotations
 
+import argparse
+
 import pytest
 
-from mousecfg.vendor import framing, guard
+from mousecfg import discovery
+from mousecfg.vendor import device as device_module
+from mousecfg.vendor import framing, guard, parsers
 from mousecfg.vendor.device import VendorDevice
 
 # -- кадры ---------------------------------------------------------------
@@ -178,8 +182,13 @@ def test_probe_detects_mkespn_and_parses_identification() -> None:
     assert probe.dialect == "mkespn"
     assert probe.identification.startswith("YJX.co.mouse")
     assert probe.version == "2.3"
-    # Первый кадр — определение диалекта, второй — сама идентификация.
-    assert [frame[:2] for frame in transport.sent] == [bytes([0x55, 0x03]), bytes([0x55, 0x03])]
+    # 0x03 — определение диалекта, затем идентификация и конфигурация.
+    assert [frame[:2] for frame in transport.sent] == [
+        bytes([0x55, 0x03]),
+        bytes([0x55, 0x03]),
+        bytes([0x55, 0x0E]),
+    ]
+    assert probe.device is not None
 
 
 def test_probe_falls_back_to_yjx_dialect() -> None:
@@ -222,8 +231,8 @@ def test_deep_probe_sends_only_read_commands() -> None:
     probe = device.probe(deep=True)
 
     commands = [frame[1] for frame in transport.sent]
-    # Первый 0x03 — определение диалекта, затем идентификация и дампы.
-    assert commands == [0x03, 0x03, 0xFA, 0x0E, 0x08, 0x30]
+    # 0x03 — диалект, затем идентификация, конфигурация и deep-дампы.
+    assert commands == [0x03, 0x03, 0x0E, 0xFA, 0x08, 0x30]
     assert all(cmd not in guard.MKESPN_WRITES for cmd in commands)
     labels = [response.label for response in probe.responses]
     assert any("DPI" in label for label in labels)
@@ -257,3 +266,138 @@ def test_write_frame_never_reaches_transport() -> None:
         device._mkespn_query(0x0D, 0x00)  # noqa: SLF001
 
     assert transport.sent == []
+
+
+# -- разбор живого ответа ------------------------------------------------
+
+# Кадр, снятый с реальной мыши AJAZZ 2.4G (a8a5:2255), диалект mkespn.
+REAL_IDENT = "YJX.co.mouse271220Nov 12 202518:49:27Feb 20 202420:18:19"
+REAL_CONFIG = bytes.fromhex(
+    "00 00 04 06 05 90 01 20 03 b0 04 40 06 60 09 80 0c"
+    " 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00"
+    " 00 00 00 00 00 00 ff 01 0a 0a ff 4d 00 00"
+)
+
+
+def _reply_with_data(cmd: int, sub: int, data: bytes) -> framing.MkespnReply:
+    raw = _mkespn_reply(cmd, sub, data)
+    reply = framing.parse_mkespn_reply(raw)
+    assert reply is not None
+    return reply
+
+
+def test_parse_identification_splits_model_code_and_dates() -> None:
+    info = parsers.parse_identification(REAL_IDENT)
+
+    assert info.model == "YJX.co.mouse"
+    assert info.code == "271220"
+    assert info.firmware_dates == ["Nov 12 202518:49:27", "Feb 20 202420:18:19"]
+    assert "YJX.co.mouse" in info.describe()
+
+
+def test_parse_dpi_config_matches_the_live_mouse() -> None:
+    config = parsers.parse_dpi_config(_reply_with_data(0x0E, 0xA5, REAL_CONFIG))
+
+    assert config.levels == [400, 800, 1200, 1600, 2400, 3200]
+    assert config.current_dpi == 2400
+    assert config.poll_rate_hz == 1000
+    assert config.dpi_count == 6
+    assert config.tail.startswith("01 0a")
+
+
+def test_parse_dpi_config_survives_short_reply() -> None:
+    config = parsers.parse_dpi_config(_reply_with_data(0x0E, 0xA5, b"\x00\x00"))
+
+    assert config.levels == []
+    assert config.current_dpi == 0
+    assert config.describe()
+
+
+def test_parse_session_state_keeps_raw_bytes() -> None:
+    state = parsers.parse_session_state(_reply_with_data(0x30, 0xA5, b"\x4d\x00\x00"))
+
+    assert state.data == "4d 00 00"
+    assert state.first_byte == 0x4D
+
+
+# -- CLI: карточка мыши без HID++ ---------------------------------------
+
+
+def _evdev_mouse() -> discovery.MouseInfo:
+    return discovery.MouseInfo(
+        key="serial:1",
+        name="YJX-CHIP AJAZZ 2.4G Mouse",
+        serial="1",
+        usb_id="a8a5:2255",
+        usb_address="1-2",
+        vendor_id=0xA8A5,
+        product_id=0x2255,
+        protocol="evdev",
+        family="ajazz-2.4g",
+        hidraw_path="/dev/hidraw4",
+        input_path="/dev/input/event20",
+        interface_number=0,
+        capabilities=discovery.EVDEV_CAPABILITIES | {discovery.VENDOR_READ_CAPABILITY},
+        vendor_path="/dev/hidraw6",
+    )
+
+
+class _FakeCliDevice:
+    def __init__(self, _path: str) -> None:
+        self.probe_result = parsers.DeviceIdentification(raw="")  # placeholder
+
+    def __enter__(self) -> _FakeCliDevice:
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        return None
+
+    def probe(self, *, deep: bool = False):  # noqa: ARG002
+        probe = device_module.VendorProbe(path="/dev/hidraw6", dialect="mkespn")
+        probe.device = parsers.parse_identification("YJX.co.mouse271220Nov 12 202518:49:27")
+        probe.dpi = parsers.DpiConfig(levels=[400, 800, 1600], current_level=2, poll_rate_hz=1000, dpi_count=3)
+        return probe
+
+
+def test_get_for_evdev_mouse_reports_vendor_dpi(monkeypatch, capsys) -> None:
+    from mousecfg import cli
+
+    monkeypatch.setattr(cli.discovery, "mouse_for_hint", lambda _hint: _evdev_mouse())
+    monkeypatch.setattr(device_module, "VendorDevice", _FakeCliDevice)
+    args = argparse.Namespace(device=None, json=False, dry_run=False, allow_onboard_switch=False, verbose=0)
+
+    assert cli.cmd_get(args) == 0
+
+    out = capsys.readouterr().out
+    assert "dpi: 1600" in out
+    assert "report_rate_hz: 1000" in out
+    assert "только чтение" in out
+
+
+def test_get_for_evdev_mouse_survives_missing_udev_access(monkeypatch, capsys) -> None:
+    from mousecfg import cli
+
+    class _Denied:
+        def __init__(self, _path: str) -> None:
+            raise PermissionError("нет доступа")
+
+    monkeypatch.setattr(cli.discovery, "mouse_for_hint", lambda _hint: _evdev_mouse())
+    monkeypatch.setattr(device_module, "VendorDevice", _Denied)
+    args = argparse.Namespace(device=None, json=False, dry_run=False, allow_onboard_switch=False, verbose=0)
+
+    assert cli.cmd_get(args) == 0
+
+    out = capsys.readouterr().out
+    assert "udev" in out  # подсказка про правило, а не падение
+
+
+def test_judge_lists_the_vendor_read_only_policy(capsys) -> None:
+    from mousecfg import cli
+
+    args = argparse.Namespace(json=False)
+    assert cli.cmd_judge(args) == 0
+
+    out = capsys.readouterr().out
+    assert "только чтение" in out
+    assert "03/00" in out
+    assert "0d/*" in out

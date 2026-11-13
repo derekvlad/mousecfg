@@ -16,6 +16,14 @@ from mousecfg.i18n import t
 from . import framing
 from .framing import MkespnReply
 from .guard import Dialect, VendorRefused, ensure_read
+from .parsers import (
+    DeviceIdentification,
+    DpiConfig,
+    SessionState,
+    parse_dpi_config,
+    parse_identification,
+    parse_session_state,
+)
 from .transport import VendorTransport, VendorTransportError
 
 _VERSION_RE = re.compile(r"\d+\.\d+(?:\.\d+)?")
@@ -39,8 +47,24 @@ class VendorProbe:
     dialect: str
     identification: str = ""
     version: str = ""
+    device: DeviceIdentification | None = None
+    dpi: DpiConfig | None = None
+    session: SessionState | None = None
     responses: list[VendorResponse] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)
+
+    def decoded(self) -> dict[str, object]:
+        """Только расшифрованные поля — для `get` и машинного вывода."""
+        data: dict[str, object] = {"dialect": self.dialect}
+        if self.device is not None:
+            data["model"] = self.device.model
+            data["code"] = self.device.code
+            data["firmware_dates"] = self.device.firmware_dates
+        if self.dpi is not None:
+            data["dpi"] = self.dpi.current_dpi
+            data["dpi_levels"] = self.dpi.levels
+            data["report_rate_hz"] = self.dpi.poll_rate_hz
+        return data
 
 
 class VendorDevice:
@@ -101,14 +125,26 @@ class VendorDevice:
         identify = self._mkespn_query(0x03, 0x00)
         if identify is not None:
             probe.identification = framing.printable_text(identify.data)
+            probe.device = parse_identification(probe.identification)
             self._remember(probe, "идентификация", framing.mkespn_frame(0x03, 0x00), identify.raw, identify.data)
+
+        config = self._mkespn_query(0x0E, 0xA5, length=0x30)
+        if config is not None:
+            probe.dpi = parse_dpi_config(config)
+            self._remember(
+                probe,
+                t("DPI / частота / подсветка", "DPI / report rate / lighting"),
+                framing.mkespn_frame(0x0E, 0xA5, length=0x30),
+                config.raw,
+                config.data,
+            )
+
         if not deep:
             return
         reads: list[tuple[str, int, int, int, int]] = [
-            ("идентификатор устройства", 0xFA, 0xAE, 0, 8),
-            ("DPI / частота / подсветка", 0x0E, 0xA5, 0, 0x30),
-            ("режимы, страница 0", 0x08, 0xA5, 0, 0x30),
-            ("состояние сессии", 0x30, 0xA5, 0, 8),
+            (t("идентификатор устройства", "device identifier"), 0xFA, 0xAE, 0, 8),
+            (t("режимы, страница 0", "modes, page 0"), 0x08, 0xA5, 0, 0x30),
+            (t("состояние сессии", "session state"), 0x30, 0xA5, 0, 0x0A),
         ]
         for label, cmd, sub, page, length in reads:
             reply = self._mkespn_query(cmd, sub, page=page, length=length)
@@ -116,6 +152,8 @@ class VendorDevice:
             if reply is None:
                 probe.notes.append(t(f"{label}: нет ответа", f"{label}: no reply"))
                 continue
+            if cmd == 0x30:
+                probe.session = parse_session_state(reply)
             self._remember(probe, label, request, reply.raw, reply.data)
 
     def _probe_yjx(self, probe: VendorProbe, *, deep: bool) -> None:
