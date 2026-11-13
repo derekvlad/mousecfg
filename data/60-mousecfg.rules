@@ -15,5 +15,12 @@ SUBSYSTEM=="hidraw", ATTRS{idVendor}=="046d", ATTRS{bInterfaceNumber}=="01", TAG
 # работал даже там, где остальные Logitech-устройства не нужны.
 SUBSYSTEM=="hidraw", ATTRS{idVendor}=="046d", ATTRS{idProduct}=="c092", TAG+="uaccess"
 
+# Вендорский канал YJX-CHIP AJAZZ 2.4G (a8a5:2255, interface 2, usage 0xFF01).
+# Проект читает оттуда только идентификацию и настройки (mousecfg vendor);
+# ни один кадр записи в onboard-память не отправляется. Если вендорский
+# канал не нужен — правило можно не ставить: профили, кнопки и макросы
+# работают через evdev и без него.
+SUBSYSTEM=="hidraw", ATTRS{idVendor}=="a8a5", ATTRS{idProduct}=="2255", ATTRS{bInterfaceNumber}=="02", TAG+="uaccess"
+
 # uinput — для макросов и ремапа кнопок на стороне хоста.
 KERNEL=="uinput", SUBSYSTEM=="misc", TAG+="uaccess", OPTIONS+="static_node=uinput"

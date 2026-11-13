@@ -23,6 +23,9 @@ daemon applies them again on reconnect.
 - mice without HID++ (e.g. AJAZZ 2.4G): per-application profiles, button
   remapping and macros through evdev; DPI, report rate and lighting are set on
   the mouse itself. See what was found and what is available with `mousecfg list`;
+- the YJX vendor channel (AJAZZ 2.4G) is **read-only**: `mousecfg vendor`
+  shows the identification and the raw replies of the read commands and writes
+  nothing;
 - a `systemd --user` daemon: it finds the mouse, applies a profile on connect
   and switches profiles based on the focused application;
 - TOML profiles: DPI, report rate, buttons, macros, matching by serial number
@@ -210,6 +213,8 @@ mousecfg lighting             # lighting zones and effects
 mousecfg lighting --effect static --color '#00a0ff' --brightness 60
 mousecfg mode host --allow-onboard-switch   # one-time switch to Host mode
 mousecfg profiles-check       # validate TOML profiles
+mousecfg vendor               # the mouse vendor channel: read-only
+mousecfg vendor --probe       # raw replies of the read commands (no writes)
 
 mousecfg status               # daemon state
 mousecfg devices              # devices managed by the daemon

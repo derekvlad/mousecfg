@@ -42,9 +42,11 @@ def unsupported_message(mouse: discovery.MouseInfo) -> str:
     """Почему для этой мыши нельзя выполнить команду HID++."""
     return t(
         f"{mouse.name}: у этой модели нет HID++, поэтому DPI, частота опроса и подсветка "
-        "недоступны. Профили, кнопки и макросы работают через evdev — см. mousecfg list.",
+        "недоступны. Профили, кнопки и макросы работают через evdev — см. mousecfg list. "
+        "Если у мыши есть вендорский канал, идентификацию можно прочитать: mousecfg vendor.",
         f"{mouse.name}: this model has no HID++, so DPI, report rate and lighting are "
-        "unavailable. Profiles, buttons and macros work through evdev — see mousecfg list.",
+        "unavailable. Profiles, buttons and macros work through evdev — see mousecfg list. "
+        "If the mouse has a vendor channel, its identification can be read: mousecfg vendor.",
     )
 
 
@@ -81,10 +83,12 @@ def _hidpp_node(hint: str | None) -> discovery.HidrawNode:
             t(
                 "HID++ мышь не найдена. Подключены мыши без HID++ ("
                 f"{names}) — для них работают профили, кнопки и макросы, "
-                "но не DPI/частота/подсветка. Список: mousecfg list",
+                "но не DPI/частота/подсветка. Список: mousecfg list; "
+                "вендорский канал (если есть) читается командой mousecfg vendor",
                 "no HID++ mouse found. Connected mice lack HID++ ("
                 f"{names}) — profiles, buttons and macros work for them, "
-                "but DPI/report rate/lighting do not. List them with: mousecfg list",
+                "but DPI/report rate/lighting do not. List them with: mousecfg list; "
+                "the vendor channel (if present) is read with mousecfg vendor",
             )
         )
     raise DeviceNotFound(

@@ -10,6 +10,26 @@ GPL-3.0-or-later (see `LICENSE`).
 
 None. All code in `src/mousecfg` was written for this project.
 
+## How the YJX vendor protocol material was used
+
+For mice built on the YJX controller (AJAZZ 2.4G) two independent write-ups
+were read, both only as a **protocol reference**: facts about frames were taken
+from them, not code.
+
+* `deepinthewoods/mkespn` (`PROTOCOL.md`, MIT) — the 64-byte vendor-channel
+  frame format (`55 …` request, `aa …` reply) and the purpose of the commands
+  (`03/00` identification, `08/a5` mode pages, `0e/a5` DPI/report rate/
+  lighting, `0d/00` keymap write that clears memory when the body is non-empty).
+* the npm `yjx-sdk-mouse` package (no licence declared) — a second frame
+  dialect (`f0 …` with memory addresses), the purpose of the commands (`08`
+  short read, `0e` retry, `30` battery, `52` handshake) and the read area base
+  `0x0ba5`.
+
+No code from those projects was copied: `src/mousecfg/vendor/` was written from
+scratch, and the read-only checks in `vendor/guard.py` are the project's own
+policy. The `yjx-sdk-mouse` package ships no licence, so it is used purely as a
+source of protocol facts.
+
 ## How the installed Solaar was used
 
 The development machine has `solaar 1.1.20` installed

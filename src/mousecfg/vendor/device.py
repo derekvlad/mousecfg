@@ -1,0 +1,186 @@
+"""Чтение вендорского канала YJX: определение диалекта и разведочные дампы.
+
+Здесь нет ни одного кадра записи: перед отправкой каждый запрос проходит
+`guard.ensure_read()`, а самих запросов ровно столько, сколько перечислено
+в read-allowlist. Назначение модуля — честно показать, что мышь отвечает,
+и отдать сырые данные для документации; декодировать наугад мы не пытаемся.
+"""
+
+from __future__ import annotations
+
+import re
+from dataclasses import dataclass, field
+
+from mousecfg.i18n import t
+
+from . import framing
+from .framing import MkespnReply
+from .guard import Dialect, VendorRefused, ensure_read
+from .transport import VendorTransport, VendorTransportError
+
+_VERSION_RE = re.compile(r"\d+\.\d+(?:\.\d+)?")
+
+
+class VendorError(RuntimeError):
+    """Вендорский канал не ответил или ответ не распознан."""
+
+
+@dataclass
+class VendorResponse:
+    label: str
+    request: str
+    reply: str
+    text: str = ""
+
+
+@dataclass
+class VendorProbe:
+    path: str
+    dialect: str
+    identification: str = ""
+    version: str = ""
+    responses: list[VendorResponse] = field(default_factory=list)
+    notes: list[str] = field(default_factory=list)
+
+
+class VendorDevice:
+    """Одна мышь на вендорском интерфейсе. Только чтение."""
+
+    def __init__(self, path: str, *, timeout: float = 0.8) -> None:
+        self.transport = VendorTransport(path, timeout=timeout)
+        self.path = self.transport.path
+
+    def __enter__(self) -> VendorDevice:
+        self.transport.open()
+        return self
+
+    def __exit__(self, *exc_info: object) -> None:
+        self.transport.close()
+
+    # -- диалект --------------------------------------------------------
+    def detect_dialect(self) -> Dialect | None:
+        """Какой из двух диалектов слушает прошивка."""
+        if self._mkespn_query(0x03, 0x00) is not None:
+            return Dialect.MKESPN
+        if self._yjx_read(framing.yjx_packet(0x04), accept=0x04) is not None:
+            return Dialect.YJX
+        return None
+
+    # -- разведка -------------------------------------------------------
+    def probe(self, *, deep: bool = False) -> VendorProbe:
+        """Определить диалект и, если `deep`, снять read-only дампы."""
+        dialect = self.detect_dialect()
+        probe = VendorProbe(path=self.path, dialect=dialect.value if dialect else "unknown")
+        if dialect is None:
+            probe.notes.append(
+                t(
+                    "ни один из известных диалектов не ответил; значит канал другой",
+                    "neither of the known dialects answered; the channel must be different",
+                )
+            )
+            return probe
+
+        if dialect is Dialect.MKESPN:
+            self._probe_mkespn(probe, deep=deep)
+        else:
+            self._probe_yjx(probe, deep=deep)
+
+        if probe.identification:
+            match = _VERSION_RE.search(probe.identification)
+            if match:
+                probe.version = match.group(0)
+        probe.notes.append(
+            t(
+                "прочитано только чтением; запись в этом канале проект не выполняет",
+                "read-only: the project never writes in this channel",
+            )
+        )
+        return probe
+
+    def _probe_mkespn(self, probe: VendorProbe, *, deep: bool) -> None:
+        identify = self._mkespn_query(0x03, 0x00)
+        if identify is not None:
+            probe.identification = framing.printable_text(identify.data)
+            self._remember(probe, "идентификация", framing.mkespn_frame(0x03, 0x00), identify.raw, identify.data)
+        if not deep:
+            return
+        reads: list[tuple[str, int, int, int, int]] = [
+            ("идентификатор устройства", 0xFA, 0xAE, 0, 8),
+            ("DPI / частота / подсветка", 0x0E, 0xA5, 0, 0x30),
+            ("режимы, страница 0", 0x08, 0xA5, 0, 0x30),
+            ("состояние сессии", 0x30, 0xA5, 0, 8),
+        ]
+        for label, cmd, sub, page, length in reads:
+            reply = self._mkespn_query(cmd, sub, page=page, length=length)
+            request = framing.mkespn_frame(cmd, sub, page=page, length=length)
+            if reply is None:
+                probe.notes.append(t(f"{label}: нет ответа", f"{label}: no reply"))
+                continue
+            self._remember(probe, label, request, reply.raw, reply.data)
+
+    def _probe_yjx(self, probe: VendorProbe, *, deep: bool) -> None:
+        ping = self._yjx_read(framing.yjx_packet(0x04), accept=0x04)
+        if ping is not None:
+            probe.identification = framing.printable_text(framing.normalize_yjx_reply(ping))
+            self._remember(probe, "ping / версия", framing.yjx_packet(0x04), ping, framing.normalize_yjx_reply(ping))
+        if not deep:
+            return
+        reads: list[tuple[str, bytes, tuple[int, ...]]] = [
+            ("заряд и USB", framing.yjx_packet(0x30, bytes([0x01, 0, 0, 0, 0, 0])), (0x30,)),
+            ("конфигурация", framing.yjx_addressed_packet(0x08, 0x0BA5, 0x2C), (0x08, 0x0E)),
+            ("данные устройства", framing.yjx_addressed_packet(0x30, 0x0BA5, 0x2E), (0x30, 0x0E)),
+            ("профиль", framing.yjx_addressed_packet(0x0E, 0x0BA5, 0x2E), (0x0E, 0x08)),
+        ]
+        for label, request, accept in reads:
+            reply = self._yjx_read(request, accept=accept)
+            if reply is None:
+                probe.notes.append(t(f"{label}: нет ответа", f"{label}: no reply"))
+                continue
+            self._remember(probe, label, request, reply, framing.normalize_yjx_reply(reply))
+
+    # -- низкий уровень -------------------------------------------------
+    def _remember(self, probe: VendorProbe, label: str, request: bytes, reply: bytes, data: bytes) -> None:
+        probe.responses.append(
+            VendorResponse(
+                label=label,
+                request=framing.hex_bytes(request),
+                reply=framing.hex_bytes(reply),
+                text=framing.printable_text(data),
+            )
+        )
+
+    def _mkespn_query(self, cmd: int, sub: int, *, page: int = 0, length: int = 0) -> MkespnReply | None:
+        ensure_read(Dialect.MKESPN, cmd, sub)
+        request = framing.mkespn_frame(cmd, sub, page=page, length=length)
+
+        def accept(frame: bytes) -> MkespnReply | None:
+            reply = framing.parse_mkespn_reply(frame)
+            if reply is None or reply.cmd != cmd or reply.sub != sub:
+                return None
+            return reply
+
+        return self.transport.exchange(request, accept)  # type: ignore[return-value]
+
+    def _yjx_read(self, request: bytes, *, accept: int | tuple[int, ...]) -> bytes | None:
+        command = request[1]
+        ensure_read(Dialect.YJX, command, request[2] if len(request) > 2 else 0)
+        accepted = (accept,) if isinstance(accept, int) else accept
+
+        def matches(frame: bytes) -> bytes | None:
+            view = framing.normalize_yjx_reply(frame)
+            if view and view[0] in accepted:
+                return view
+            return None
+
+        return self.transport.exchange(request, matches)  # type: ignore[return-value]
+
+
+__all__ = [
+    "Dialect",
+    "VendorDevice",
+    "VendorError",
+    "VendorProbe",
+    "VendorRefused",
+    "VendorResponse",
+    "VendorTransportError",
+]

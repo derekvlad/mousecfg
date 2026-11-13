@@ -119,12 +119,18 @@ manages it at the evdev level only.
 | How it looks in the CLI | `mousecfg list` → `protocol: evdev (no HID++)` and `available: buttons and macros` |
 | Daemon | attaches the mouse, logs `evdev: DPI, report rate and lighting are unavailable`, and `mousecfg devices` / `status` list it |
 | Protocol commands | `get`, `set-dpi`, `set-rate`, `lighting`, `mode` return a clear error and send nothing |
+| Vendor channel | interface 2 (`usage page 0xFF01`, 64-byte in/out); the project opens it **read-only** — `mousecfg vendor [--probe]` |
+| YJX protocol | reverse-engineered by the community: frame `55 cmd sub chk len off_lo off_hi page data…`, reply `aa …`. Read commands: `03/00` identification, `08/a5` mode pages, `0e/a5` DPI/report rate/lighting, `30/a5`, `fa/ae` |
+| Why we never write | writing the configuration goes straight to onboard flash, and `0d/00` with a non-empty body clears a range of memory. The `vendor/guard.py` policy refuses every write frame before it is sent |
 
 ### Limitations
 
 * DPI, report rate and lighting cannot be changed: the protocol is closed and the
   project never writes to onboard memory. These settings are only available
   through the vendor software or the buttons on the mouse itself.
-* Interface 2 (`usage page 0xFF01`) is not used and is never opened.
+* Interface 2 (`usage page 0xFF01`) is opened read-only (`mousecfg vendor`). It
+  needs access to this mouse's `/dev/hidraw*`: the `data/60-mousecfg.rules` rule
+  plus `sudo udevadm trigger --subsystem-match=hidraw`. Without the rule only
+  evdev is available.
 * The `On-Board → Host` switch, HID++ features and `RGB_EFFECTS` lighting do not
   apply to these mice — in `mousecfg judge` they remain HID++-only.

@@ -15,6 +15,7 @@ from .hidpp import guard
 from .hidpp.protocol import DeviceError, FeatureUnsupportedError, ProtocolError, TransportError
 from .i18n import t
 from .input import detect as input_detect
+from .vendor.guard import VendorRefused
 
 LOG = logging.getLogger("mousecfg")
 
@@ -75,6 +76,20 @@ def _build_parser() -> argparse.ArgumentParser:
     sub.add_parser("list", parents=[common], help=t("показать мыши, их протокол и доступные настройки", "show mice, their protocol and available settings"))
     sub.add_parser("judge", parents=[common], help=t("показать политику: что разрешено, что запрещено", "show the policy: what is allowed and what is denied"))
     sub.add_parser("get", parents=[common], help=t("прочитать имя, прошивку, DPI, report rate, режим", "read name, firmware, DPI, report rate and mode"))
+
+    vendor = sub.add_parser(
+        "vendor",
+        parents=[common],
+        help=t(
+            "прочитать вендорский канал мыши (только чтение, без записи в память)",
+            "read the mouse vendor channel (read-only, nothing is written to memory)",
+        ),
+    )
+    vendor.add_argument(
+        "--probe",
+        action="store_true",
+        help=t("снять сырые дампы читающих команд", "dump the raw replies of the read commands"),
+    )
 
     dpi = sub.add_parser("set-dpi", parents=[common], help=t("установить DPI (волатильно)", "set DPI (volatile)"))
     dpi.add_argument("dpi", type=int)
@@ -235,6 +250,7 @@ def cmd_list(args: argparse.Namespace) -> int:
         "lighting": t("подсветка", "lighting"),
         "mode": "Host/On-Board",
         "buttons": t("кнопки и макросы", "buttons and macros"),
+        discovery.VENDOR_READ_CAPABILITY: t("чтение вендорского канала", "vendor channel read"),
     }
     print(t("Мыши:", "Mice:"))
     for mouse in mice:
@@ -248,11 +264,20 @@ def cmd_list(args: argparse.Namespace) -> int:
                     "    no HID++: profiles, buttons and macros go through evdev; DPI/report rate/lighting are unavailable",
                 )
             )
+        if mouse.vendor_path:
+            print(
+                t(
+                    f"    вендорский канал: {mouse.vendor_path} — только чтение, см. mousecfg vendor",
+                    f"    vendor channel: {mouse.vendor_path} — read-only, see mousecfg vendor",
+                )
+            )
 
     if args.verbose:
         print(t("\nВсе hidraw-узлы:", "\nAll hidraw nodes:"))
         for node in discovery.discover(include_all=True):
             marks = ["HID++ if01"] if node.is_hidpp_candidate else [t("не HID++ кандидат", "not a HID++ candidate")]
+            if node.vendor_channel:
+                marks.append(t("вендорский канал", "vendor channel"))
             print(f"  {node.describe()}  ({', '.join(marks)})")
     return 0
 
@@ -316,6 +341,60 @@ def cmd_get(args: argparse.Namespace) -> int:
 
         data["features"] = sorted(f"{feature:#06x}" for feature in device.discover_features())
         _dump(data, args.json)
+    return 0
+
+
+def cmd_vendor(args: argparse.Namespace) -> int:
+    """Прочитать вендорский канал: идентификация и read-only дампы."""
+    from .vendor.device import VendorDevice, VendorError
+
+    mouse = discovery.mouse_for_hint(args.device) if args.device else None
+    if mouse is None and args.device is None:
+        mouse = next((item for item in discovery.find_mice() if item.vendor_path), None)
+    if mouse is None:
+        hint = t(f" по подсказке {args.device!r}", f" matching {args.device!r}") if args.device else ""
+        print(t(f"Мышь{hint} не найдена.", f"No mouse{hint} found."), file=sys.stderr)
+        return 1
+    if not mouse.vendor_path:
+        print(
+            t(
+                f"{mouse.name}: вендорского канала нет — читать нечего",
+                f"{mouse.name}: there is no vendor channel — nothing to read",
+            ),
+            file=sys.stderr,
+        )
+        return 1
+
+    try:
+        with VendorDevice(mouse.vendor_path) as device:
+            probe = device.probe(deep=bool(args.probe))
+    except (VendorError, OSError) as exc:
+        print(exc, file=sys.stderr)
+        return 1
+
+    if args.json:
+        from dataclasses import asdict
+
+        print(json.dumps(asdict(probe), ensure_ascii=False, indent=2))
+        return 0
+
+    print(t(f"Мышь: {mouse.name}  [{mouse.usb_id}]", f"Mouse: {mouse.name}  [{mouse.usb_id}]"))
+    print(t(f"Вендорский канал: {probe.path} (только чтение)", f"Vendor channel: {probe.path} (read-only)"))
+    print(t(f"Диалект: {probe.dialect}", f"Dialect: {probe.dialect}"))
+    if probe.identification:
+        print(t(f"Идентификация: {probe.identification}", f"Identification: {probe.identification}"))
+    if probe.version:
+        print(t(f"Версия прошивки: {probe.version}", f"Firmware version: {probe.version}"))
+    if probe.responses:
+        print(t("Ответы на читающие команды:", "Replies to the read commands:"))
+        for response in probe.responses:
+            print(f"  {response.label}:")
+            print(f"    request: {response.request}")
+            print(f"    reply:   {response.reply}")
+            if response.text:
+                print(t(f"    текст:   {response.text}", f"    text:    {response.text}"))
+    for note in probe.notes:
+        print(f"  ! {note}")
     return 0
 
 
@@ -1088,6 +1167,11 @@ def cmd_status(args: argparse.Namespace) -> int:
                 "    управление: evdev (без HID++; DPI, частота и подсветка недоступны)",
                 "    managed via: evdev (no HID++; DPI, report rate and lighting are unavailable)",
             ))
+        if "vendor-read" in (device.get("capabilities") or []):
+            print(t(
+                "    вендорский канал: доступен только для чтения, см. mousecfg vendor",
+                "    vendor channel: read-only, see mousecfg vendor",
+            ))
         if device.get("last_error"):
             print(t(f"    ошибка: {device['last_error']}", f"    error: {device['last_error']}"))
         for name, action in (device.get("buttons_plan") or {}).items():
@@ -1291,6 +1375,7 @@ def main(argv: list[str] | None = None) -> int:
         "list": cmd_list,
         "judge": cmd_judge,
         "get": cmd_get,
+        "vendor": cmd_vendor,
         "set-dpi": cmd_set_dpi,
         "set-rate": cmd_set_rate,
         "mode": cmd_mode,
@@ -1321,7 +1406,7 @@ def main(argv: list[str] | None = None) -> int:
     except session.DeviceNotFound as exc:
         print(exc, file=sys.stderr)
         return 1
-    except guard.DeniedCommand as exc:
+    except (guard.DeniedCommand, VendorRefused) as exc:
         print(t(f"Отказано политикой безопасности: {exc}", f"Denied by the safety policy: {exc}"), file=sys.stderr)
         return 3
     except ipc.IpcError as exc:

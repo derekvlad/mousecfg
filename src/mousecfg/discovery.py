@@ -33,6 +33,9 @@ VENDOR_FAMILIES: dict[tuple[int, int], str] = {
 # подключении (наличие фич DPI/RGB/onboard), здесь — грубая картина.
 HIDPP_CAPABILITIES = frozenset({"buttons", "dpi", "report_rate", "lighting", "mode"})
 EVDEV_CAPABILITIES = frozenset({"buttons"})
+# Мышь отвечает на вендорском интерфейсе, и оттуда можно читать
+# идентификацию и настройки. Запись проект не выполняет никогда.
+VENDOR_READ_CAPABILITY = "vendor-read"
 
 
 @dataclass(frozen=True)
@@ -50,6 +53,8 @@ class HidrawNode:
     input_paths: tuple[str, ...] = ()
     pointer_path: str = ""
     pointer_name: str = ""
+    # Вендорский HID-канал (usage page 0xFF01, 64-байтные отчёты).
+    vendor_channel: bool = False
 
     @property
     def usb_id(self) -> str:
@@ -93,6 +98,8 @@ class MouseInfo:
     input_path: str
     interface_number: int | None
     capabilities: frozenset[str]
+    # Узел вендорского канала (только чтение). Пусто — канала нет.
+    vendor_path: str = ""
 
     @property
     def supports_hidpp(self) -> bool:
@@ -106,6 +113,8 @@ class MouseInfo:
         bits = [self.name or self.usb_id, f"[{self.usb_id}]", t(f"протокол: {protocol}", f"protocol: {protocol}")]
         if self.input_path:
             bits.append(t(f"ввод: {self.input_path}", f"input: {self.input_path}"))
+        if self.vendor_path:
+            bits.append(t(f"вендорский канал: {self.vendor_path} (только чтение)", f"vendor channel: {self.vendor_path} (read-only)"))
         if self.serial:
             bits.append(f"serial={self.serial}")
         return "  ".join(bits)
@@ -160,6 +169,19 @@ def _looks_like_pointer(input_dir: Path) -> bool:
     rels = _read_bitmask(input_dir / "capabilities" / "rel")
     absolutes = _read_bitmask(input_dir / "capabilities" / "abs")
     return 272 in keys and {0, 1} <= rels and not ({0, 1} & absolutes)
+
+
+def _has_vendor_channel(device_link: Path) -> bool:
+    """Вендорский канал: usage page 0xFF01 и 64-байтные отчёты.
+
+    Дескриптор читается из sysfs и доступен без прав на `/dev/hidraw*`:
+    доступ к каналу нужен только в момент чтения, а не для обнаружения.
+    """
+    try:
+        descriptor = (device_link / "report_descriptor").read_bytes()
+    except OSError:
+        return False
+    return b"\x06\x01\xff" in descriptor and b"\x95\x40" in descriptor
 
 
 def _input_nodes(device_link: Path) -> tuple[tuple[str, ...], str, str]:
@@ -231,6 +253,7 @@ def discover(*, include_all: bool = False) -> list[HidrawNode]:
             input_paths=input_paths,
             pointer_path=pointer_path,
             pointer_name=pointer_name,
+            vendor_channel=_has_vendor_channel(device_link),
         )
         nodes.append(node)
 
@@ -282,6 +305,7 @@ def find_mice() -> list[MouseInfo]:
 def _mouse_from_group(nodes: list[HidrawNode]) -> MouseInfo | None:
     hidpp = next((node for node in nodes if node.is_hidpp_candidate), None)
     pointer = next((node for node in nodes if node.pointer_path), None)
+    vendor = next((node for node in nodes if node.vendor_channel), None)
     if hidpp is None and pointer is None:
         return None
 
@@ -299,6 +323,12 @@ def _mouse_from_group(nodes: list[HidrawNode]) -> MouseInfo | None:
         serial=primary.serial, usb_id=primary.usb_id, usb_address=primary.usb_address
     )
     protocol = "hidpp" if hidpp is not None else "evdev"
+    if protocol == "hidpp":
+        capabilities = HIDPP_CAPABILITIES
+    elif vendor is not None:
+        capabilities = EVDEV_CAPABILITIES | {VENDOR_READ_CAPABILITY}
+    else:
+        capabilities = EVDEV_CAPABILITIES
     return MouseInfo(
         key=key,
         name=name,
@@ -312,7 +342,8 @@ def _mouse_from_group(nodes: list[HidrawNode]) -> MouseInfo | None:
         hidraw_path=primary.path,
         input_path=(pointer.pointer_path if pointer else ""),
         interface_number=primary.interface_number,
-        capabilities=HIDPP_CAPABILITIES if protocol == "hidpp" else EVDEV_CAPABILITIES,
+        capabilities=capabilities,
+        vendor_path=(vendor.path if vendor is not None else ""),
     )
 
 
@@ -323,6 +354,7 @@ def mouse_for_hint(hint: str) -> MouseInfo | None:
         if (
             hint_lower in mouse.hidraw_path.lower()
             or hint_lower in mouse.input_path.lower()
+            or hint_lower in mouse.vendor_path.lower()
             or hint_lower == mouse.usb_id
             or hint_lower in mouse.serial.lower()
             or hint_lower in mouse.name.lower()

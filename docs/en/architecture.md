@@ -16,6 +16,7 @@ GUI (GTK4/libadwaita)   CLI (mousecfg)   tray (GTK3 + AppIndicator3)
                   |
           daemon (systemd --user)
           ├── discovery    — find mice in sysfs: HID++ and evdev-only
+          ├── vendor       — YJX vendor channel: read identification and dumps
           ├── profiles     — TOML schema, storage, matching
           ├── apply        — apply a profile, retry on hotplug
           ├── appwatch     — focused application → profile selection
@@ -32,6 +33,15 @@ interfaces of one device, marks the protocol and finds the `event` node.
 For `protocol = "evdev"` the daemon never opens hidraw, and
 `engine.apply_profile(None, …)` skips protocol settings with a clear
 explanation; profiles, buttons and macros keep working.
+
+`vendor/` is the third layer, read-only. Mice built on the YJX controller have
+a separate HID interface (`usage page 0xFF01`, 64-byte reports); the daemon
+never opens it and it plays no part in profiles. On an explicit command
+(`mousecfg vendor`) the project reads the identification and the raw replies of
+the read commands from there. Before every `os.write` the frame is checked by
+`vendor/guard.py`: only the listed read commands are allowed, while write
+frames (including `0d 00`, which clears memory) are refused — the project never
+writes to onboard flash.
 
 `hidpp/guard.py` and `hidpp/safeplane.py` are the core of the requirement. Every
 send goes through `SafePlane.send()`: first the command is classified

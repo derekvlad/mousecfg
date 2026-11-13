@@ -20,6 +20,14 @@ POINTER_KEYS = "ffff0000 0 0 0 0"
 POINTER_RELS = "1943"  # REL_X, REL_Y, REL_HWHEEL, REL_WHEEL, *_HI_RES
 NO_ABS = "0"
 
+# Вендорский интерфейс AJAZZ: usage page 0xFF01, 64-байтные in/out.
+VENDOR_DESCRIPTOR = bytes.fromhex(
+    "06 01 ff 09 10 a1 01 15 00 26 ff 00 19 01 29 08"
+    "95 40 75 08 81 02 19 01 29 08 91 02 c0"
+)
+# Обычная мышь тоже держит вендорскую страницу, но другую — 0xFFA5.
+MOUSE_DESCRIPTOR = bytes.fromhex("05 01 09 02 a1 01 85 02 09 01 a1 00 06 a5 ff 09 88 a1 01")
+
 
 def _interface(
     root: Path,
@@ -35,6 +43,7 @@ def _interface(
     pointer_name: str = "",
     pointer_keys: str = POINTER_KEYS,
     event: str = "",
+    vendor: bool = False,
 ) -> None:
     usb_dir = root / "sys" / "usb1" / usb / f"{usb}:1.{interface}"
     usb_dir.mkdir(parents=True)
@@ -65,6 +74,9 @@ def _interface(
         (input_dir / "capabilities" / "rel").write_text(POINTER_RELS, encoding="utf-8")
         (input_dir / "capabilities" / "abs").write_text(NO_ABS, encoding="utf-8")
         (input_dir / event).write_text("", encoding="utf-8")
+
+    descriptor = VENDOR_DESCRIPTOR if vendor else MOUSE_DESCRIPTOR
+    (hid_dir / "report_descriptor").write_bytes(descriptor)
 
     node = root / "hidraw" / hidraw
     node.mkdir(parents=True)
@@ -148,6 +160,7 @@ def test_non_logitech_mouse_is_evdev_only(fake_sysfs: Path) -> None:
         interface=2,
         hid_name="YJX-CHIP AJAZZ 2.4G",
         serial="D1K_251010b271_A72V1",
+        vendor=True,
     )
 
     mice = discovery.find_mice()
@@ -159,7 +172,9 @@ def test_non_logitech_mouse_is_evdev_only(fake_sysfs: Path) -> None:
     assert mouse.family == "ajazz-2.4g"
     assert mouse.hidraw_path == "/dev/hidraw4"
     assert mouse.input_path == "/dev/input/event20"
-    assert mouse.capabilities == frozenset({"buttons"})
+    assert mouse.vendor_path == "/dev/hidraw6"
+    assert mouse.capabilities == frozenset({"buttons", "vendor-read"})
+    assert mouse.supports("vendor-read")
     assert mouse.key == "serial:D1K_251010b271_A72V1"
 
 
@@ -199,6 +214,8 @@ def test_mouse_without_keyboard_interface_is_found(fake_sysfs: Path) -> None:
     mice = discovery.find_mice()
 
     assert [mouse.protocol for mouse in mice] == ["evdev"]
+    assert mice[0].vendor_path == ""
+    assert mice[0].capabilities == frozenset({"buttons"})
     assert discovery.mouse_for_hint("ABC123") == mice[0]
     assert discovery.mouse_for_hint("/dev/input/event9") == mice[0]
 
