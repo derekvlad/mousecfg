@@ -187,6 +187,7 @@ class _FakeDevice:
 
     def __init__(self, _path: str, **_kwargs: object) -> None:
         self.written: list[bytes] = []
+        self._current = LIVE_CONFIG
 
     def __enter__(self) -> _FakeDevice:
         return self
@@ -195,13 +196,14 @@ class _FakeDevice:
         return None
 
     def read_config(self):  # noqa: ANN201
-        return _reply(LIVE_CONFIG)
+        return _reply(self._current)
 
     def read_keys(self):  # noqa: ANN201
         return None
 
     def write_config(self, config: bytes, *, dry_run: bool = False) -> bytes:  # noqa: ARG002
         self.written.append(bytes(config))
+        self._current = bytes(config)  # как настоящая мышь: чтение вернёт записанное
         frame = bytearray(64)
         frame[0] = 0xAA
         frame[1] = 0x0F
@@ -285,3 +287,92 @@ def test_consent_warning_shown_once(monkeypatch: pytest.MonkeyPatch, tmp_path: P
     # Второй раз предупреждение не повторяется.
     assert cli._onboard_confirm(mouse, allow_write=True, assume_yes=True) is True  # noqa: SLF001
     assert capsys.readouterr().out.strip() == ""
+
+
+# -- RPC демона: чтение/запись памяти мыши --------------------------------
+
+
+def _daemon_with_vendor(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+    from mousecfg import daemon, registry
+
+    state = registry.DeviceState(
+        key="serial:S1", serial="S1", name="YJX-CHIP AJAZZ 2.4G Mouse",
+        usb_id="a8a5:2255", protocol="evdev",
+    )
+    d = daemon.Daemon(daemon.DaemonConfig(watch_apps=False, apply_buttons=False))
+    runtime = daemon.DeviceRuntime(key=state.key, state=state)
+    runtime.vendor_path = "/dev/hidraw6"
+    d.devices[state.key] = runtime
+    monkeypatch.setattr("mousecfg.config.backups_dir", lambda: tmp_path / "backups")
+    monkeypatch.setattr("mousecfg.onboard_consent.granted", lambda _key: True)
+    monkeypatch.setattr("mousecfg.onboard_consent.record", lambda _key: None)
+    return d, state.key
+
+
+def test_daemon_onboard_info_reads_without_writing(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    d, key = _daemon_with_vendor(monkeypatch, tmp_path)
+    devices: list[_FakeDevice] = []
+
+    def factory(path: str, **kwargs: object) -> _FakeDevice:
+        device = _FakeDevice(path, **kwargs)
+        devices.append(device)
+        return device
+
+    monkeypatch.setattr("mousecfg.daemon.VendorDevice", factory)
+
+    info = d._handle_rpc("onboard-info", {"device": key})  # noqa: SLF001
+
+    assert info["vendor_path"] == "/dev/hidraw6"
+    assert info["consent"] is True
+    assert info["changes"]["dpi_levels"] == [400, 800, 1200, 1600, 2400, 2700]
+    assert all(device.written == [] for device in devices)
+
+
+def test_daemon_onboard_apply_requires_consent(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    from mousecfg import ipc
+
+    d, key = _daemon_with_vendor(monkeypatch, tmp_path)
+    monkeypatch.setattr("mousecfg.onboard_consent.granted", lambda _key: False)
+    monkeypatch.setattr("mousecfg.daemon.VendorDevice", lambda path, **kw: _FakeDevice(path, **kw))
+
+    with pytest.raises(ipc.IpcError):
+        d._handle_rpc("onboard-apply", {"device": key, "confirm": True, "dpi": 1600})  # noqa: SLF001
+
+
+def test_daemon_onboard_apply_takes_snapshot_then_writes(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    d, key = _daemon_with_vendor(monkeypatch, tmp_path)
+    devices: list[_FakeDevice] = []
+
+    def factory(path: str, **kwargs: object) -> _FakeDevice:
+        device = _FakeDevice(path, **kwargs)
+        devices.append(device)
+        return device
+
+    monkeypatch.setattr("mousecfg.daemon.VendorDevice", factory)
+
+    message = d._handle_rpc("onboard-apply", {"device": key, "confirm": True, "dpi": 2400, "dpi_level": 5})  # noqa: SLF001
+
+    assert "2400" in message
+    assert list((tmp_path / "backups").glob("onboard-*.json"))
+    written = next(device.written[0] for device in devices if device.written)
+    assert written[5 + 5 * 2] | (written[6 + 5 * 2] << 8) == 2400
+    assert d.devices[key].onboard_levels[5] == 2400  # _FakeDevice отдаёт 2400 после чтения в тесте
+
+
+def test_daemon_onboard_restore_uses_latest_snapshot(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    d, key = _daemon_with_vendor(monkeypatch, tmp_path)
+    monkeypatch.setattr("mousecfg.daemon.VendorDevice", lambda path, **kw: _FakeDevice(path, **kw))
+    snap = snapshot.snapshot_from_reads(_reply(LIVE_CONFIG), device="M", serial="S1", usb_id="a8a5:2255")
+    snapshot.save(snap)
+
+    message = d._handle_rpc("onboard-restore", {"device": key, "confirm": True})  # noqa: SLF001
+
+    assert "снимок записан" in message or "snapshot written" in message
+
+
+def test_daemon_onboard_rpc_rejects_unknown_method(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    from mousecfg import ipc
+
+    d, _key = _daemon_with_vendor(monkeypatch, tmp_path)
+    with pytest.raises(ipc.IpcError):
+        d._handle_rpc("onboard-nonexistent", {})  # noqa: SLF001

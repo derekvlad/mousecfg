@@ -22,6 +22,9 @@ from .input.detect import InputDeviceInfo, find_pointer_devices
 from .input.macros import parse_macros
 from .input.remapper import Remapper
 from .vendor import device as vendor_device
+from .vendor import snapshot
+from .vendor.device import VendorDevice
+from .vendor.parsers import OnboardConfig
 
 logger = logging.getLogger(__name__)
 
@@ -79,6 +82,8 @@ class DeviceRuntime:
     battery_history: list[int] = field(default_factory=list)
     # Вендорский узел (только чтение) — из него берём заряд.
     vendor_path: str = ""
+    # Уровни DPI, прочитанные из памяти мыши (вендорский канал).
+    onboard_levels: list[int] = field(default_factory=list)
 
     @property
     def profile_ids(self) -> list[str]:
@@ -641,6 +646,16 @@ class Daemon:
             return self._rpc_profile_remove(params)
         if method == "profile-export":
             return self._rpc_profile_export(params)
+        if method == "onboard-info":
+            return self._rpc_onboard_info(params)
+        if method == "onboard-consent":
+            return self._rpc_onboard_consent(params)
+        if method == "onboard-backup":
+            return self._rpc_onboard_backup(params)
+        if method == "onboard-apply":
+            return self._rpc_onboard_apply(params)
+        if method == "onboard-restore":
+            return self._rpc_onboard_restore(params)
         raise ipc.IpcError(t(f"неизвестный метод {method!r}", f"unknown method {method!r}"))
 
     def _describe(self, runtime: DeviceRuntime) -> dict:
@@ -656,6 +671,11 @@ class Daemon:
         data["capabilities"] = list(runtime.state.capabilities)
         data["battery_percent"] = runtime.battery_percent
         data["lighting_supported"] = self._lighting_supported(runtime)
+        data["onboard"] = {
+            "vendor_path": runtime.vendor_path,
+            "consent": onboard_consent.granted(runtime.key) if runtime.vendor_path else False,
+        }
+        data["dpi_levels"] = runtime.onboard_levels
         if runtime.active_profile is not None:
             data["buttons_plan"] = engine.plan_button_actions(runtime.active_profile)
         return data
@@ -984,6 +1004,127 @@ class Daemon:
         if not path.exists():
             raise ipc.IpcError(t(f"файл профилей не найден: {path}", f"profiles file not found: {path}"))
         return {"path": str(path), "text": path.read_text(encoding="utf-8")}
+
+    # -- память мыши (вендорский канал) ----------------------------------
+    def _onboard_runtime(self, params: dict) -> DeviceRuntime:
+        return self._runtime_or_error(str(params.get("device", "")))
+
+    def _rpc_onboard_info(self, params: dict) -> dict:
+        """Прочитать настройки памяти мыши (только чтение)."""
+        runtime = self._onboard_runtime(params)
+        if not runtime.vendor_path:
+            return {"vendor_path": "", "consent": False, "changes": {}}
+        try:
+            with VendorDevice(runtime.vendor_path) as device:
+                reply = device.read_config()
+        except OSError as exc:
+            raise ipc.IpcError(str(exc)) from exc
+        if reply is None:
+            raise ipc.IpcError(t("мышь не ответила на чтение конфигурации", "the mouse did not answer the configuration read"))
+        config_obj = OnboardConfig.from_bytes(bytes(reply.data))
+        runtime.onboard_levels = list(config_obj.dpi_levels)
+        return {
+            "vendor_path": runtime.vendor_path,
+            "consent": onboard_consent.granted(runtime.key),
+            "changes": {
+                "dpi_levels": config_obj.dpi_levels,
+                "dpi_index": config_obj.dpi_index,
+                "report_rate_code": config_obj.report_rate_code,
+                "light_mode": config_obj.light_mode,
+            },
+        }
+
+    def _rpc_onboard_consent(self, params: dict) -> dict:
+        runtime = self._onboard_runtime(params)
+        onboard_consent.record(runtime.key)
+        return {"consent": True}
+
+    def _onboard_require_consent(self, runtime: DeviceRuntime, params: dict) -> None:
+        if not params.get("confirm") or not onboard_consent.granted(runtime.key):
+            raise ipc.IpcError(
+                t(
+                    "запись в память мыши не разрешена — подтвердите предупреждение",
+                    "writing to the mouse memory is not allowed — confirm the warning first",
+                )
+            )
+        if not runtime.vendor_path:
+            raise ipc.IpcError(t("вендорского канала нет", "there is no vendor channel"))
+
+    def _onboard_snapshot(self, runtime: DeviceRuntime, device: object, reply: object) -> object:
+        return snapshot.snapshot_from_reads(
+            reply,
+            device=runtime.state.name,
+            serial=runtime.state.serial,
+            usb_id=runtime.state.usb_id,
+            keys_reply=device.read_keys(),
+        )
+
+    def _rpc_onboard_backup(self, params: dict) -> str:
+        runtime = self._onboard_runtime(params)
+        if not runtime.vendor_path:
+            raise ipc.IpcError(t("вендорского канала нет", "there is no vendor channel"))
+        try:
+            with VendorDevice(runtime.vendor_path) as device:
+                reply = device.read_config()
+                if reply is None:
+                    raise ipc.IpcError(t("мышь не ответила на чтение конфигурации", "the mouse did not answer the configuration read"))
+                snap = self._onboard_snapshot(runtime, device, reply)
+        except OSError as exc:
+            raise ipc.IpcError(str(exc)) from exc
+        return str(snapshot.save(snap))
+
+    def _rpc_onboard_apply(self, params: dict) -> str:
+        """Записать настройки в память мыши. Только после согласия и снимка."""
+        runtime = self._onboard_runtime(params)
+        self._onboard_require_consent(runtime, params)
+        try:
+            with VendorDevice(runtime.vendor_path) as device:
+                reply = device.read_config()
+                if reply is None:
+                    raise ipc.IpcError(t("мышь не ответила на чтение конфигурации", "the mouse did not answer the configuration read"))
+                after = OnboardConfig.from_bytes(bytes(reply.data))
+                changes: list[str] = []
+                if params.get("dpi") is not None:
+                    index = int(params.get("dpi_level", after.dpi_index))
+                    after.set_level(index, int(params["dpi"]))
+                    changes.append(f"dpi[{index}]={params['dpi']}")
+                if params.get("rate") is not None:
+                    after.report_rate_code = int(params["rate"])
+                    changes.append(f"report_rate={params['rate']}")
+                if not changes:
+                    raise ipc.IpcError(t("не задано ни одной настройки", "no setting was given"))
+                # Снимок обязательно до записи.
+                snapshot.save(self._onboard_snapshot(runtime, device, reply))
+                sent = device.write_config(after.to_bytes())
+                if sent is None:
+                    raise ipc.IpcError(t("мышь не подтвердила запись", "the mouse did not confirm the write"))
+                check = device.read_config()
+        except OSError as exc:
+            raise ipc.IpcError(str(exc)) from exc
+        if check is not None:
+            verified = OnboardConfig.from_bytes(bytes(check.data))
+            runtime.onboard_levels = list(verified.dpi_levels)
+            runtime.dpi = verified.dpi_levels[verified.dpi_index] if verified.dpi_levels else None
+        return t(f"записано в мышь: {', '.join(changes)}", f"written to the mouse: {', '.join(changes)}")
+
+    def _rpc_onboard_restore(self, params: dict) -> str:
+        runtime = self._onboard_runtime(params)
+        self._onboard_require_consent(runtime, params)
+        snap = snapshot.load_latest(usb_id=runtime.state.usb_id, serial=runtime.state.serial)
+        if snap is None:
+            raise ipc.IpcError(t("снимок не найден — сначала «Снимок»", "no snapshot found — take one first"))
+        try:
+            with VendorDevice(runtime.vendor_path) as device:
+                sent = device.write_config(snap.config_bytes)
+                if sent is None:
+                    raise ipc.IpcError(t("мышь не подтвердила запись", "the mouse did not confirm the write"))
+                check = device.read_config()
+        except OSError as exc:
+            raise ipc.IpcError(str(exc)) from exc
+        if check is not None:
+            verified = OnboardConfig.from_bytes(bytes(check.data))
+            runtime.onboard_levels = list(verified.dpi_levels)
+        return t(f"снимок записан: {snap.describe()}", f"snapshot written: {snap.describe()}")
 
 
 def _slug(name: str) -> str:

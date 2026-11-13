@@ -42,10 +42,14 @@ never opens it and it plays no part in profiles. On an explicit command
 the factory codes, as well as the raw replies of the read commands from there;
 `mousecfg get` adds what was read to the mouse card. The daemon reads the
 battery once a minute and shows it in `status`, the tray and the window (the
-value is smoothed with a median: the byte fluctuates by ±2%). Before every `os.write` the frame is checked by
-`vendor/guard.py`: only the listed read commands are allowed, while write
-frames (including `0d 00`, which clears memory) are refused — the project never
-writes to onboard flash.
+value is smoothed with a median: the byte fluctuates by ±2%).
+
+Before every `os.write` the frame is checked by `vendor/guard.py`: only read
+commands are allowed by default. Writing to the memory (`0f/ae`, `09/a5`) is
+available only via the explicit `mousecfg onboard` operation (CLI) or the
+"Mouse memory" group in the GUI (the same `onboard-*` RPC methods), always with
+`--allow-onboard-write`/confirmation, a warning on first connect and a snapshot
+before the write (`vendor/snapshot.py`); `0d 00` (memory erase) is never sent.
 
 `hidpp/guard.py` and `hidpp/safeplane.py` are the core of the requirement. Every
 send goes through `SafePlane.send()`: first the command is classified

@@ -1,8 +1,10 @@
-"""Главное окно: устройство, DPI, профили, кнопки.
+"""Главное окно: устройство, DPI, профили, кнопки, память мыши.
 
-Ключевая идея интерфейса: пользователь нигде не может нажать «записать в
-мышь». Все переключатели описывают рантайм-состояние на хосте, а подпись
-внизу окна постоянно напоминает, что настройки живут до отключения мыши.
+Ключевая идея интерфейса: обычные переключатели описывают рантайм-состояние
+на хосте и живут до отключения мыши. Отдельная группа «Память мыши» (только
+для мышей с вендорским каналом, например AJAZZ) умеет писать DPI в саму
+мышь — но лишь после предупреждения, с обязательным снимком до записи и
+возможностью вернуть прежнее состояние.
 """
 
 from __future__ import annotations
@@ -139,6 +141,11 @@ class MainWindow(Adw.ApplicationWindow):
         self._group_rows: dict[Adw.PreferencesGroup, list[Gtk.Widget]] = {}
         self._suppress = False
         self._record_macro_button: Gtk.Button | None = None
+        # Мышь с вендорским каналом (AJAZZ): можно писать в память после согласия.
+        self.vendor_path = ""
+        self.onboard_consent = False
+        self.onboard_changes: dict = {}
+        self._pending_onboard_action = None
 
         self._build_ui()
         self._refresh()
@@ -207,6 +214,8 @@ class MainWindow(Adw.ApplicationWindow):
         self.rate_row.connect("notify::selected", self._on_rate_changed)
         self.devices_group.add(self.rate_row)
 
+        self._build_onboard_group()
+
         self.profiles_group = Adw.PreferencesGroup(
             title=t("Профили", "Profiles"),
             description=t("Профили хранятся в ~/.config/mousecfg/profiles и не зависят от памяти мыши", "Profiles are stored in ~/.config/mousecfg/profiles and do not depend on mouse memory"),
@@ -263,7 +272,10 @@ class MainWindow(Adw.ApplicationWindow):
         footer.set_margin_start(12)
         footer.set_margin_end(12)
         label = Gtk.Label(
-            label=t("Настройки живут в оперативной памяти мыши и не пишутся во встроенную память.", "Settings live in the mouse RAM and are not written to onboard memory."),
+            label=t(
+                "Настройки профиля живут в оперативной памяти мыши. Группа «Память мыши» — единственное место, где можно записать настройки в саму мышь (со снимком до записи).",
+                "Profile settings live in the mouse RAM. The “Mouse memory” group is the only place where settings can be written into the mouse itself (with a snapshot taken before the write).",
+            ),
             xalign=0,
         )
         label.add_css_class("dim-label")
@@ -285,6 +297,7 @@ class MainWindow(Adw.ApplicationWindow):
         self._clear_group(self.macros_group)
         self.dpi_row.set_sensitive(False)
         self.rate_row.set_sensitive(False)
+        self.onboard_group.set_visible(False)
 
     def _on_status(self, status: object) -> None:
         data = dict(status)  # type: ignore[arg-type]
@@ -335,6 +348,8 @@ class MainWindow(Adw.ApplicationWindow):
             self.battery_row.set_visible(False)
 
         self._sync_settings(device)
+        self._render_onboard_group(device)
+        self._refresh_onboard()
         self.lighting_group.set_visible(bool(device.get("lighting_supported")))
         self._render_profiles(device)
         self._render_buttons(device)
@@ -355,6 +370,198 @@ class MainWindow(Adw.ApplicationWindow):
                 self.rate_row.set_selected(RATE_CHOICES.index(int(rate)))
         finally:
             self._suppress = False
+
+    def _build_onboard_group(self) -> None:
+        """Группа «Память мыши» (AJAZZ): настройка DPI с записью в мышь.
+
+        Отдельная от волатильного DPI выше: там значение живёт до
+        отключения, здесь — сохраняется в самой мыши. Кнопки записи
+        появляются только после явного согласия.
+        """
+        self.onboard_group = Adw.PreferencesGroup(
+            title=t("Память мыши", "Mouse memory"),
+            description=t(
+                "Настройки сохраняются в самой мыши (onboard flash) и переживают отключение. "
+                "Перед записью снимается снимок, его можно вернуть.",
+                "Settings are saved in the mouse itself (onboard flash) and survive disconnection. "
+                "A snapshot is taken before every write and can be restored.",
+            ),
+        )
+        self.onboard_group.set_visible(False)
+
+        self.onboard_dpi_row = Adw.SpinRow.new_with_range(100, 30000, 50)
+        self.onboard_dpi_row.set_title(t("DPI в памяти мыши", "DPI in mouse memory"))
+        self.onboard_dpi_row.set_subtitle(t("Запишется в мышь, а не только в рантайм", "Written to the mouse, not just the runtime"))
+        self.onboard_group.add(self.onboard_dpi_row)
+
+        self.onboard_level_row = Adw.ComboRow(title=t("Уровень DPI", "DPI level"))
+        self.onboard_level_row.set_model(
+            Gtk.StringList.new([t(f"Уровень {index + 1}", f"Level {index + 1}") for index in range(6)])
+        )
+        self.onboard_group.add(self.onboard_level_row)
+
+        self.onboard_info_row = Adw.ActionRow(title=t("Прочитано с мыши", "Read from the mouse"), subtitle="—")
+        self.onboard_group.add(self.onboard_info_row)
+
+        self.onboard_backup_button = Gtk.Button(label=t("Снимок", "Snapshot"))
+        self.onboard_backup_button.add_css_class("flat")
+        self.onboard_backup_button.connect("clicked", lambda *_: self._on_onboard_backup())
+
+        self.onboard_restore_button = Gtk.Button(label=t("Вернуть снимок", "Restore snapshot"))
+        self.onboard_restore_button.add_css_class("flat")
+        self.onboard_restore_button.connect("clicked", lambda *_: self._on_onboard_restore())
+
+        self.onboard_write_button = Gtk.Button(label=t("Записать DPI в мышь", "Write DPI to the mouse"))
+        self.onboard_write_button.add_css_class("suggested-action")
+        self.onboard_write_button.set_sensitive(False)
+        self.onboard_write_button.connect("clicked", lambda *_: self._on_onboard_write())
+
+        buttons_row = Adw.ActionRow(title=t("Действия", "Actions"))
+        for button in (self.onboard_backup_button, self.onboard_restore_button, self.onboard_write_button):
+            buttons_row.add_suffix(button)
+        self.onboard_group.add(buttons_row)
+
+    def _render_onboard_group(self, device: dict) -> None:
+        onboard = device.get("onboard")
+        self.vendor_path = str((onboard or {}).get("vendor_path") or "")
+        self.onboard_consent = bool((onboard or {}).get("consent", False))
+        if not self.vendor_path:
+            self.onboard_group.set_visible(False)
+            return
+        self.onboard_group.set_visible(True)
+        self.onboard_level_row.set_sensitive(True)
+        self.onboard_dpi_row.set_sensitive(True)
+        self.onboard_write_button.set_label(
+            t("Записать DPI в мышь", "Write DPI to the mouse") if self.onboard_consent
+            else t("Разрешить запись…", "Allow writing…")
+        )
+        self.onboard_write_button.set_sensitive(bool(self.onboard_changes))
+
+    def _refresh_onboard(self) -> None:
+        """Прочитать настройки памяти мыши по вендорскому каналу (без записи)."""
+        if not self.device_key or not self.vendor_path:
+            return
+        self.client.call_async(
+            "onboard-info",
+            on_done=self._on_onboard_info,
+            on_error=self._on_error,
+            device=self.device_key,
+        )
+
+    def _on_onboard_info(self, payload: object) -> None:
+        data = dict(payload)  # type: ignore[arg-type]
+        self.onboard_changes = dict(data.get("changes") or {})
+        self.onboard_consent = bool(data.get("consent", self.onboard_consent))
+        self.onboard_write_button.set_sensitive(bool(self.onboard_changes))
+        self._sync_onboard_values(self.onboard_changes)
+
+    def _sync_onboard_values(self, changes: dict) -> None:
+        """Показать прочитанные значения, не отправив случайную запись."""
+        levels = changes.get("dpi_levels") or []
+        index = int(changes.get("dpi_index") or 0)
+        self._suppress = True
+        try:
+            count = min(len(levels) or len(changes.get("dpi_levels") or []) or 6, 6)
+            labels = [t(f"Уровень {i + 1}: {levels[i]}", f"Level {i + 1}: {levels[i]}") for i in range(count)]
+            self.onboard_level_row.set_model(Gtk.StringList.new(labels))
+            if 0 <= index < count:
+                self.onboard_level_row.set_selected(index)
+            if 0 <= index < len(levels):
+                self.onboard_dpi_row.set_value(float(levels[index]))
+        finally:
+            self._suppress = False
+        if levels:
+            levels_text = ", ".join(str(item) for item in levels)
+            self.onboard_info_row.set_subtitle(
+                t(f"Уровни: {levels_text}", f"Levels: {levels_text}")
+            )
+
+    # -- память мыши: снимок / запись ------------------------------------
+    def _on_onboard_backup(self) -> None:
+        if not self.device_key:
+            return
+        self.client.call_async(
+            "onboard-backup",
+            on_done=lambda result: self._toast(t(f"Снимок: {result}", f"Snapshot: {result}")),
+            on_error=self._on_error,
+            device=self.device_key,
+        )
+
+    def _on_onboard_restore(self) -> None:
+        if not self.device_key:
+            return
+        self._onboard_confirm(lambda: self.client.call_async(
+            "onboard-restore",
+            on_done=lambda _result: self._toast(t("Снимок записан в мышь", "Snapshot written to the mouse")),
+            on_error=self._on_error,
+            device=self.device_key,
+            confirm=True,
+        ))
+
+    def _on_onboard_write(self) -> None:
+        if not self.device_key:
+            return
+        level = int(self.onboard_level_row.get_selected())
+        value = int(self.onboard_dpi_row.get_value())
+        self._onboard_confirm(lambda: self.client.call_async(
+            "onboard-apply",
+            on_done=lambda result: self._toast(str(result)),
+            on_error=self._on_error,
+            device=self.device_key,
+            confirm=True,
+            dpi=value,
+            dpi_level=level,
+        ))
+
+    def _onboard_confirm(self, action) -> None:
+        """Выполнить действие записи, при необходимости спросив согласие.
+
+        Согласие запоминается демоном по устройству. В первый раз вместо
+        немедленной записи показывается предупреждение, а само действие
+        выполняется после нажатия «Разрешить и записать».
+        """
+        if self.onboard_consent:
+            action()
+            return
+        self._pending_onboard_action = action
+        self._show_onboard_warning()
+
+    def _show_onboard_warning(self) -> None:
+        dialog = Adw.MessageDialog(
+            transient_for=self,
+            modal=True,
+            heading=t("Запись в память мыши", "Writing to the mouse memory"),
+            body=t(
+                "Эта операция сохраняется в самой мыши: переживает отключение и перезагрузку. "
+                "Гарантий нет — протокол разобран сообществом. Перед записью будет снят снимок "
+                "текущих настроек, его можно вернуть кнопкой «Вернуть снимок»; полная "
+                "перестраховка — веб-конфигуратор AJAZZ с «Reset to default».",
+                "This change is stored in the mouse itself: it survives disconnection and reboot. "
+                "There are no guarantees — the protocol was reverse-engineered by the community. "
+                "Before writing, a snapshot of the current settings is taken and can be restored "
+                "with “Restore snapshot”; the ultimate fallback is the AJAZZ web configurator "
+                "with “Reset to default”.",
+            ),
+        )
+        dialog.add_response("cancel", t("Отмена", "Cancel"))
+        dialog.add_response("allow", t("Разрешить и записать", "Allow and write"))
+        dialog.set_response_appearance("allow", Adw.ResponseAppearance.SUGGESTED)
+        dialog.set_default_response("cancel")
+        dialog.connect("response", self._on_onboard_warning_response)
+        dialog.present()
+
+    def _on_onboard_warning_response(self, _dialog: Adw.MessageDialog, response: str) -> None:
+        action = getattr(self, "_pending_onboard_action", None)
+        self._pending_onboard_action = None
+        if response != "allow":
+            return
+        # Демон запомнит согласие по устройству и сразу выполнит действие.
+        self.onboard_consent = True
+        if action is not None:
+            self.client.call_async(
+                "onboard-consent", on_done=lambda _r: None, on_error=self._on_error, device=self.device_key
+            )
+            action()
 
     def _render_profiles(self, device: dict) -> None:
         self._clear_group(self.profiles_group)

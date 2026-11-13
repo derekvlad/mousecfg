@@ -178,7 +178,10 @@ How this stays safe:
 * `0d/00` (memory erase) is never sent, even when writing is allowed.
 
 Verified live: writing DPI level 2400 → the read confirmed the change →
-`onboard restore` from the snapshot brought 2700 back. The daemon still never
+`onboard restore` from the snapshot brought 2700 back. The same is available
+in the GUI: the "Mouse memory" group shows the levels, lets you pick a level,
+set the DPI, take a snapshot and write to the mouse; the first attempt shows a
+warning. The daemon still never
 touches the memory: profiles stay volatile.
 
 Fallback if something goes wrong: the AJAZZ web configurator → Onboard
