@@ -37,8 +37,10 @@ explanation; profiles, buttons and macros keep working.
 `vendor/` is the third layer, read-only. Mice built on the YJX controller have
 a separate HID interface (`usage page 0xFF01`, 64-byte reports); the daemon
 never opens it and it plays no part in profiles. On an explicit command
-(`mousecfg vendor`) the project reads the identification and the raw replies of
-the read commands from there. Before every `os.write` the frame is checked by
+(`mousecfg vendor`) the project reads the identification, the configuration
+(`parsers.py`: DPI levels, the active level, the report rate) and the raw
+replies of the read commands from there; `mousecfg get` adds what was read to
+the mouse card. Before every `os.write` the frame is checked by
 `vendor/guard.py`: only the listed read commands are allowed, while write
 frames (including `0d 00`, which clears memory) are refused — the project never
 writes to onboard flash.
