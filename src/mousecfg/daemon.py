@@ -34,20 +34,29 @@ RECONNECT_SECONDS = 1.0
 # Если event-узел мыши не нашёлся при подключении (ACL появился позже, узел
 # ещё не создан), пробуем поднять ремап заново с этой периодичностью.
 REMAP_RETRY_SECONDS = 5.0
-# Заряд мыши без HID++ читаем через вендорский канал раз в минуту: чаще
-# незачем, а hidraw при этом не занят.
-BATTERY_POLL_SECONDS = 60.0
-# Сколько последних измерений заряда храним для медианы. Байт заряда у
-# AJAZZ шумит на ±2%, поэтому без сглаживания значок в трее дрожал бы.
-BATTERY_HISTORY = 5
+# Заряд мыши без HID++ читаем через вендорский канал. 30 секунд: байт шумит
+# на ±2% (гасится антидребезгом в _smooth_battery), поэтому чаще не нужно, но
+# и минута — долго: пользователь успевает увидеть устаревшее число.
+BATTERY_POLL_SECONDS = 30.0
+# Насколько может «дрожать» байт заряда, чтобы это считалось шумом, а не
+# изменением. В пределах этого порога показываем прежнее значение (значок не
+# дёргается), при большем отличии — сразу новое (без задержки в минуты).
+BATTERY_NOISE = 2
 
 
-def _smooth_battery(history: list[int], percent: int) -> int:
-    """Медиана последних измерений (устойчива к одиночным выбросам)."""
-    history.append(percent)
-    del history[:-BATTERY_HISTORY]
-    ordered = sorted(history)
-    return ordered[len(ordered) // 2]
+def _smooth_battery(previous: int | None, percent: int) -> int:
+    """Подавить шум байта заряда, но не задерживать реальное изменение.
+
+    Раньше здесь была медиана из 5 измерений: она сглаживала шум (±2%), но
+    при разрядке/зарядке откладывала новое значение на несколько минут —
+    GUI/трей показывали устаревшее число. Теперь маленькое отличие держим
+    прежним (антидребезг), а заметное — принимаем сразу.
+    """
+    if previous is None:
+        return percent
+    if abs(percent - previous) <= BATTERY_NOISE:
+        return previous
+    return percent
 
 
 @dataclass
@@ -77,9 +86,6 @@ class DeviceRuntime:
     # ещё не читали или модель его не отдаёт.
     battery_percent: int | None = None
     battery_at: float = 0.0
-    # Последние измерения: заряд у этой модели шумит на ±2%, а сглаживание
-    # медианой не даёт значку в трее дёргаться на границах порогов.
-    battery_history: list[int] = field(default_factory=list)
     # Вендорский узел (только чтение) — из него берём заряд.
     vendor_path: str = ""
     # Уровни DPI, прочитанные из памяти мыши (вендорский канал).
@@ -197,7 +203,7 @@ class Daemon:
             percent = vendor_device.read_battery_percent(runtime.vendor_path)
             if percent is None:
                 continue
-            smoothed = _smooth_battery(runtime.battery_history, percent)
+            smoothed = _smooth_battery(runtime.battery_percent, percent)
             if smoothed != runtime.battery_percent:
                 logger.info(t("%s: заряд %d%%", "%s: battery %d%%"), runtime.state.name, smoothed)
             runtime.battery_percent = smoothed

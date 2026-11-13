@@ -460,29 +460,30 @@ def _as_device(device: VendorDevice) -> VendorDevice:
     return _Ctx()  # type: ignore[return-value]
 
 
-def test_battery_smoothing_uses_median_and_keeps_history_bounded() -> None:
-    from mousecfg.daemon import BATTERY_HISTORY, _smooth_battery
-
-    history: list[int] = []
-    values = [81, 80, 52, 79, 78, 77]
-    smoothed = [_smooth_battery(history, value) for value in values]
-
-    # Одиночный выброс 52 не должен сдвинуть медиану.
-    assert smoothed[2] == 80
-    assert len(history) <= BATTERY_HISTORY
-
-
-def test_battery_smoothing_recovers_after_real_drop() -> None:
+def test_battery_ignores_small_noise() -> None:
     from mousecfg.daemon import _smooth_battery
 
-    history: list[int] = []
-    for value in [81] * 5:
-        _smooth_battery(history, value)
-    last = None
-    for value in [60] * 5:
-        last = _smooth_battery(history, value)
+    # Шум ±2% не должен дёргать показания.
+    assert _smooth_battery(None, 80) == 80
+    assert _smooth_battery(80, 81) == 80
+    assert _smooth_battery(80, 78) == 80
+    assert _smooth_battery(80, 82) == 80
 
-    assert last == 60
+
+def test_battery_accepts_real_change_without_delay() -> None:
+    from mousecfg.daemon import BATTERY_NOISE, _smooth_battery
+
+    # Заметное изменение показывается сразу, а не через минуты (как было с
+    # медианой из 5 измерений — из-за неё GUI/трей отставали).
+    assert _smooth_battery(75, 100) == 100
+    assert _smooth_battery(100, 60) == 60
+    assert _smooth_battery(50, 50 + BATTERY_NOISE + 1) == 50 + BATTERY_NOISE + 1
+
+
+def test_battery_change_of_exactly_the_noise_threshold_is_held() -> None:
+    from mousecfg.daemon import BATTERY_NOISE, _smooth_battery
+
+    assert _smooth_battery(90, 90 - BATTERY_NOISE) == 90
 
 
 def test_vendor_command_shows_battery_and_reads_only(monkeypatch, capsys) -> None:
