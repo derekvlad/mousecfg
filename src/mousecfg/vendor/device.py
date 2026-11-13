@@ -19,9 +19,11 @@ from .guard import Dialect, VendorRefused, ensure_read
 from .parsers import (
     DeviceIdentification,
     DpiConfig,
+    InfoBlock,
     SessionState,
     parse_dpi_config,
     parse_identification,
+    parse_info_block,
     parse_session_state,
 )
 from .transport import VendorTransport, VendorTransportError
@@ -50,6 +52,7 @@ class VendorProbe:
     device: DeviceIdentification | None = None
     dpi: DpiConfig | None = None
     session: SessionState | None = None
+    info: InfoBlock | None = None
     responses: list[VendorResponse] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)
 
@@ -64,7 +67,15 @@ class VendorProbe:
             data["dpi"] = self.dpi.current_dpi
             data["dpi_levels"] = self.dpi.levels
             data["report_rate_hz"] = self.dpi.poll_rate_hz
+        if self.session is not None and self.session.percent is not None:
+            data["battery_percent"] = self.session.percent
         return data
+
+    def read_battery_percent(self) -> int | None:
+        """Проценты заряда (запрос только чтения `30/a5`)."""
+        if self.session is None:
+            return None
+        return self.session.percent
 
 
 class VendorDevice:
@@ -139,12 +150,22 @@ class VendorDevice:
                 config.data,
             )
 
+        battery = self._mkespn_query(0x30, 0xA5, length=0x0A)
+        if battery is not None:
+            probe.session = parse_session_state(battery)
+            self._remember(
+                probe,
+                t("заряд и USB", "battery and USB"),
+                framing.mkespn_frame(0x30, 0xA5, length=0x0A),
+                battery.raw,
+                battery.data,
+            )
+
         if not deep:
             return
         reads: list[tuple[str, int, int, int, int]] = [
             (t("идентификатор устройства", "device identifier"), 0xFA, 0xAE, 0, 8),
             (t("режимы, страница 0", "modes, page 0"), 0x08, 0xA5, 0, 0x30),
-            (t("состояние сессии", "session state"), 0x30, 0xA5, 0, 0x0A),
         ]
         for label, cmd, sub, page, length in reads:
             reply = self._mkespn_query(cmd, sub, page=page, length=length)
@@ -152,9 +173,28 @@ class VendorDevice:
             if reply is None:
                 probe.notes.append(t(f"{label}: нет ответа", f"{label}: no reply"))
                 continue
-            if cmd == 0x30:
-                probe.session = parse_session_state(reply)
             self._remember(probe, label, request, reply.raw, reply.data)
+
+        self._read_info_block(probe)
+
+    def _read_info_block(self, probe: VendorProbe) -> None:
+        """Заводские коды на страницах 5..6 (`08/a5`) — только чтение."""
+        pages: dict[int, bytes] = {}
+        for page in (5, 6):
+            reply = self._mkespn_query(0x08, 0xA5, page=page, length=0x30)
+            if reply is None:
+                continue
+            pages[page] = bytes(reply.data)
+        if not pages:
+            return
+        probe.info = parse_info_block(pages)
+        self._remember(
+            probe,
+            t("заводские коды, страницы 5..6", "factory codes, pages 5..6"),
+            framing.mkespn_frame(0x08, 0xA5, page=5, length=0x30),
+            b"",
+            b"".join(pages[page] for page in sorted(pages)),
+        )
 
     def _probe_yjx(self, probe: VendorProbe, *, deep: bool) -> None:
         ping = self._yjx_read(framing.yjx_packet(0x04), accept=0x04)
@@ -213,6 +253,26 @@ class VendorDevice:
         return self.transport.exchange(request, matches)  # type: ignore[return-value]
 
 
+def read_battery_percent(path: str, *, timeout: float = 0.8) -> int | None:
+    """Прочитать только заряд (один кадр `30/a5`).
+
+    Отдельная функция для демона: не тянет за собой полную разведку и
+    подходит для периодического опроса. Ничего не пишет и не бросает
+    исключений при недоступном узле — просто возвращает None.
+    """
+    try:
+        with VendorDevice(path, timeout=timeout) as device:
+            dialect = device.detect_dialect()
+            if dialect is not Dialect.MKESPN:
+                return None
+            reply = device._mkespn_query(0x30, 0xA5, length=0x0A)  # noqa: SLF001
+    except (VendorError, OSError):
+        return None
+    if reply is None:
+        return None
+    return parse_session_state(reply).percent
+
+
 __all__ = [
     "Dialect",
     "VendorDevice",
@@ -221,4 +281,5 @@ __all__ = [
     "VendorRefused",
     "VendorResponse",
     "VendorTransportError",
+    "read_battery_percent",
 ]

@@ -132,7 +132,13 @@ A live run of `mousecfg vendor --probe` on this mouse. All replies are read-only
 | Identification `03/00` | `YJX.co.mouse` `271220` `Nov 12 2025 18:49:27` `Feb 20 2024 20:18:19` | model `YJX.co.mouse`, code `271220`, two firmware build dates |
 | Configuration `0e/a5` | `00 00 04 06 05 90 01 20 03 b0 04 40 06 60 09 80 0c …` | 6 DPI levels: **400 / 800 / 1200 / 1600 / 2400 / 3200**, current **2400**, report rate **1000 Hz** (code `04`), lighting off (`00`) |
 | Serial `fa/ae` | eight zero bytes | not populated on this model |
-| State `30/a5` | 10 bytes, the first one varies (`4d`, `51`) | not interpreted without a field description |
+| Battery `30/a5` | 10 bytes, the first one varies (`4b`…`52`) | the first byte is the **charge percentage** (0..100); it is in sync with byte 46 of the `0e/a5` reply. The SDK for the same controller calls command `0x30` "battery + USB" |
+| Factory codes `08/a5` | pages 5..6: `20250903170105-3299-3311` | a printable string; the first 14 digits are a date/time `2025-09-03 17:01:05`, followed by two code groups. The meaning of the groups is unconfirmed |
+
+A note on the battery: the byte fluctuates by ±2% between adjacent polls, so the
+daemon keeps the last 5 values and shows the median — otherwise the tray icon
+would flicker across the thresholds. For the same models the SDK calls command
+`0x30` "battery and USB", and the 0..100 range is the only sensible reading.
 
 `current_level` in the `0e/a5` reply (byte 4) is the active DPI level; `mousecfg
 get` shows it as `dpi`, and `dpi_levels` as the list. The configuration tail
@@ -151,3 +157,6 @@ is refused by the project policy.
   evdev is available.
 * The `On-Board → Host` switch, HID++ features and `RGB_EFFECTS` lighting do not
   apply to these mice — in `mousecfg judge` they remain HID++-only.
+* A profile for this mouse (example): `default` with the side buttons
+  `side1=browser-back`, `side2=browser-forward`, and `browser` for firefox/vivaldi
+  (`side1=prev-tab`, `side2=next-tab`). The buttons are applied by the evdev layer.

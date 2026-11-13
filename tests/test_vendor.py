@@ -182,11 +182,12 @@ def test_probe_detects_mkespn_and_parses_identification() -> None:
     assert probe.dialect == "mkespn"
     assert probe.identification.startswith("YJX.co.mouse")
     assert probe.version == "2.3"
-    # 0x03 — определение диалекта, затем идентификация и конфигурация.
+    # 0x03 — диалект, затем идентификация, конфигурация и заряд.
     assert [frame[:2] for frame in transport.sent] == [
         bytes([0x55, 0x03]),
         bytes([0x55, 0x03]),
         bytes([0x55, 0x0E]),
+        bytes([0x55, 0x30]),
     ]
     assert probe.device is not None
 
@@ -224,15 +225,15 @@ def test_deep_probe_sends_only_read_commands() -> None:
         0xFA: _mkespn_reply(0xFA, 0xAE, bytes(range(8))),
         0x0E: _mkespn_reply(0x0E, 0xA5, bytes(range(0x30))),
         0x08: _mkespn_reply(0x08, 0xA5, bytes(range(0x30))),
-        0x30: _mkespn_reply(0x30, 0xA5, bytes(range(8))),
+        0x30: _mkespn_reply(0x30, 0xA5, b"\x51" + bytes(9)),
     }
     device, transport = _device_with(replies)
 
     probe = device.probe(deep=True)
 
     commands = [frame[1] for frame in transport.sent]
-    # 0x03 — диалект, затем идентификация, конфигурация и deep-дампы.
-    assert commands == [0x03, 0x03, 0x0E, 0xFA, 0x08, 0x30]
+    # 0x03 — диалект; затем идентификация, конфигурация, заряд и deep-дампы.
+    assert commands == [0x03, 0x03, 0x0E, 0x30, 0xFA, 0x08, 0x08, 0x08]
     assert all(cmd not in guard.MKESPN_WRITES for cmd in commands)
     labels = [response.label for response in probe.responses]
     assert any("DPI" in label for label in labels)
@@ -356,6 +357,7 @@ class _FakeCliDevice:
         probe = device_module.VendorProbe(path="/dev/hidraw6", dialect="mkespn")
         probe.device = parsers.parse_identification("YJX.co.mouse271220Nov 12 202518:49:27")
         probe.dpi = parsers.DpiConfig(levels=[400, 800, 1600], current_level=2, poll_rate_hz=1000, dpi_count=3)
+        probe.session = parsers.SessionState(data="51 00 00 00 00 00 00 00 00 00")
         return probe
 
 
@@ -371,6 +373,7 @@ def test_get_for_evdev_mouse_reports_vendor_dpi(monkeypatch, capsys) -> None:
     out = capsys.readouterr().out
     assert "dpi: 1600" in out
     assert "report_rate_hz: 1000" in out
+    assert "battery_percent: 81" in out
     assert "только чтение" in out
 
 
@@ -401,3 +404,97 @@ def test_judge_lists_the_vendor_read_only_policy(capsys) -> None:
     assert "только чтение" in out
     assert "03/00" in out
     assert "0d/*" in out
+
+
+def test_parse_session_state_reports_battery_within_range() -> None:
+    state = parsers.parse_session_state(_reply_with_data(0x30, 0xA5, b"\x51" + bytes(9)))
+
+    assert state.percent == 0x51 == 81
+    assert state.first_byte == 81
+
+
+def test_parse_session_state_rejects_out_of_range_value() -> None:
+    state = parsers.parse_session_state(_reply_with_data(0x30, 0xA5, b"\xff" + bytes(9)))
+
+    assert state.percent is None
+    assert state.first_byte == 0xFF
+
+
+def test_parse_info_block_joins_pages_and_finds_timestamp() -> None:
+    page5 = bytes.fromhex(
+        "ff ff ff ff ff ff ff 01"
+        " 00 00 00 32 30 32 35 30 39 30 33 31 37 30 31 30 35"
+        " 2d 33 32 39 39 2d 33 33 31 31 00 00 ff ff ff"
+    )
+    page6 = bytes.fromhex("ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff") * 2
+
+    info = parsers.parse_info_block({5: page5, 6: page6})
+
+    assert "20250903170105-3299-3311" in info.text
+    assert info.timestamp == "2025-09-03 17:01:05"
+
+
+def test_read_battery_percent_uses_only_read_commands(monkeypatch) -> None:
+    identify = _mkespn_reply(0x03, 0x00, b"YJX.co.mouse")
+    battery = _mkespn_reply(0x30, 0xA5, b"\x51" + bytes(9))
+    device, transport = _device_with({0x03: identify, 0x30: battery})
+    monkeypatch.setattr(device_module, "VendorDevice", lambda *_a, **_k: _as_device(device))
+
+    percent = device_module.read_battery_percent("/dev/hidraw-test")
+
+    assert percent == 81
+    assert all(cmd not in guard.MKESPN_WRITES for cmd in (frame[1] for frame in transport.sent))
+    assert [frame[1] for frame in transport.sent] == [0x03, 0x30]
+
+
+def _as_device(device: VendorDevice) -> VendorDevice:
+    """Заглушка-контекст: настоящий `VendorDevice` с подменённым транспортом."""
+
+    class _Ctx:
+        def __enter__(self) -> VendorDevice:
+            return device
+
+        def __exit__(self, *exc: object) -> None:
+            return None
+
+    return _Ctx()  # type: ignore[return-value]
+
+
+def test_battery_smoothing_uses_median_and_keeps_history_bounded() -> None:
+    from mousecfg.daemon import BATTERY_HISTORY, _smooth_battery
+
+    history: list[int] = []
+    values = [81, 80, 52, 79, 78, 77]
+    smoothed = [_smooth_battery(history, value) for value in values]
+
+    # Одиночный выброс 52 не должен сдвинуть медиану.
+    assert smoothed[2] == 80
+    assert len(history) <= BATTERY_HISTORY
+
+
+def test_battery_smoothing_recovers_after_real_drop() -> None:
+    from mousecfg.daemon import _smooth_battery
+
+    history: list[int] = []
+    for value in [81] * 5:
+        _smooth_battery(history, value)
+    last = None
+    for value in [60] * 5:
+        last = _smooth_battery(history, value)
+
+    assert last == 60
+
+
+def test_vendor_command_shows_battery_and_reads_only(monkeypatch, capsys) -> None:
+    from mousecfg import cli
+
+    monkeypatch.setattr(cli.discovery, "mouse_for_hint", lambda _hint: _evdev_mouse())
+    monkeypatch.setattr(device_module, "VendorDevice", _FakeCliDevice)
+    args = argparse.Namespace(device=None, json=False, probe=False, dry_run=False, allow_onboard_switch=False, verbose=0)
+
+    assert cli.cmd_vendor(args) == 0
+
+    out = capsys.readouterr().out
+    assert "DPI: 1600" in out
+    assert "Заряд: 81%" in out
+    assert "только чтение" in out

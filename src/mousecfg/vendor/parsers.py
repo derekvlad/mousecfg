@@ -23,6 +23,7 @@ MAX_DPI_LEVELS = 6
 
 _IDENT_RE = re.compile(r"^(?P<model>[A-Za-z0-9.]+?)(?P<code>\d{4,8})(?=[A-Z][a-z]{2} )")
 _DATE_RE = re.compile(r"[A-Z][a-z]{2} \d{1,2} \d{4} ?\d{2}:\d{2}:\d{2}")
+_TIMESTAMP_RE = re.compile(r"(\d{4})(\d{2})(\d{2})(\d{2})(\d{2})(\d{2})")
 
 
 @dataclass
@@ -76,14 +77,51 @@ class DpiConfig:
 
 @dataclass
 class SessionState:
-    """Ответ `30/a5`: короткое состояние сессии. Расшифровка пока неясна."""
+    """Ответ `30/a5`: короткое состояние сессии — заряд и USB-статус.
 
-    # Сырые байты в hex: в первом байте SDK кодирует уровень заряда/сессию.
+    Публичное описание того же контроллера трактует команду `0x30` как
+    «заряд + USB», а первый байт ответа меняется со временем в пределах
+    0..100 (наблюдали 81 → 80 → 73, синхронно с байтом 46 ответа `0e/a5`).
+    Поэтому первый байт трактуем как процент заряда, но только когда он
+    действительно в диапазоне 0..100 — иначе отдаём сырое значение.
+    """
+
+    # Сырые байты в hex.
     data: str = ""
 
     @property
     def first_byte(self) -> int:
         return int(self.data[:2], 16) if self.data else 0
+
+    @property
+    def percent(self) -> int | None:
+        value = self.first_byte
+        return value if 0 <= value <= 100 else None
+
+
+@dataclass
+class InfoBlock:
+    """Строка из страниц 5..6 (`08/a5`): заводские коды.
+
+    Живой ответ: `20250903170105-3299-3311` — похоже на дату/время и две
+    группы заводских кодов. Расшифровку не выдаём за факт: отдаём строку,
+    а дату показываем, только если она складывается в календарь.
+    """
+
+    text: str = ""
+    timestamp: str = ""
+
+
+def parse_info_block(pages: dict[int, bytes]) -> InfoBlock:
+    """Склеить страницы 5..6 и вытащить печатаемую строку."""
+    blob = b"".join(pages.get(page, b"") for page in (5, 6))
+    text = "".join(chr(byte) if 32 <= byte < 127 else " " for byte in blob).strip()
+    text = " ".join(text.split())
+    block = InfoBlock(text=text)
+    match = _TIMESTAMP_RE.match(text)
+    if match:
+        block.timestamp = f"{match.group(1)}-{match.group(2)}-{match.group(3)} {match.group(4)}:{match.group(5)}:{match.group(6)}"
+    return block
 
 
 def parse_identification(text: str) -> DeviceIdentification:
@@ -132,8 +170,10 @@ def parse_session_state(reply: MkespnReply) -> SessionState:
 __all__ = [
     "DpiConfig",
     "DeviceIdentification",
+    "InfoBlock",
     "SessionState",
     "parse_dpi_config",
     "parse_identification",
+    "parse_info_block",
     "parse_session_state",
 ]

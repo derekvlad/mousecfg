@@ -30,6 +30,7 @@ gi.require_version("AppIndicator3", "0.1")
 from gi.repository import AppIndicator3, GLib, Gtk  # noqa: E402
 
 from mousecfg import hotkeys, ipc  # noqa: E402
+from mousecfg.power import battery_display  # noqa: E402
 
 logger = logging.getLogger(__name__)
 
@@ -120,6 +121,10 @@ class Tray:
         self.device_item.set_sensitive(False)
         menu.append(self.device_item)
 
+        self.battery_item = Gtk.MenuItem(label=t("заряд: —", "battery: —"))
+        self.battery_item.set_sensitive(False)
+        menu.append(self.battery_item)
+
         menu.append(Gtk.SeparatorMenuItem())
 
         self.profile_section = Gtk.MenuItem(label=t("Профиль", "Profile"))
@@ -176,9 +181,22 @@ class Tray:
         active = str(device.get("active_profile") or "—")
         self.header_item.set_label(f"mousecfg: {active}")
         self.device_item.set_label(str(device.get("name") or device.get("key") or "—"))
+        self._set_battery(device.get("battery_percent"))
         self.remap_item.set_label(t(f"Кнопки: {'включены' if self.remap_enabled else 'выключены'}", f"Buttons: {'enabled' if self.remap_enabled else 'disabled'}"))
         self._set_profile_items(list(device.get("profiles") or []), active=active)
         return False
+
+    def _set_battery(self, percent: object) -> None:
+        """Показать заряд (только если демон его прочитал)."""
+        info = battery_display(percent)
+        if info is None:
+            self.battery_item.set_label(t("заряд: —", "battery: —"))
+            self.battery_item.set_visible(False)
+            return
+        label, icon = info
+        self.battery_item.set_label(label)
+        self.battery_item.set_visible(True)
+        self.battery_item.set_icon_from_icon_name(icon)
 
     def _set_profile_items(self, profile_ids: list[str], *, active: str = "") -> None:
         for child in self.profile_menu.get_children():

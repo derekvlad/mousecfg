@@ -361,6 +361,12 @@ def _get_evdev_device(mouse: discovery.MouseInfo, args: argparse.Namespace) -> i
                 data["dpi_levels"] = probe.dpi.levels
                 data["report_rate_hz"] = probe.dpi.poll_rate_hz
                 data["dpi_source"] = t("прочитано с мыши, изменить из Linux нельзя", "read from the mouse, cannot be changed from Linux")
+            if probe.session is not None and probe.session.percent is not None:
+                data["battery_percent"] = probe.session.percent
+            if probe.info is not None and probe.info.text:
+                data["vendor_info"] = probe.info.text
+                if probe.info.timestamp:
+                    data["vendor_info_time"] = probe.info.timestamp
     _dump(data, args.json)
     return 0
 
@@ -455,6 +461,13 @@ def cmd_vendor(args: argparse.Namespace) -> int:
         print(t(f"Версия прошивки: {probe.version}", f"Firmware version: {probe.version}"))
     if probe.dpi is not None and probe.dpi.levels:
         print(t(f"Настройки: {probe.dpi.describe()}", f"Settings: {probe.dpi.describe()}"))
+    if probe.session is not None and probe.session.percent is not None:
+        print(t(f"Заряд: {probe.session.percent}%", f"Battery: {probe.session.percent}%"))
+    if probe.info is not None and probe.info.text:
+        line = probe.info.text
+        if probe.info.timestamp:
+            line = t(f"{line}  (дата в строке: {probe.info.timestamp})", f"{line}  (timestamp in the string: {probe.info.timestamp})")
+        print(t(f"Заводские коды: {line}", f"Factory codes: {line}"))
     if probe.responses:
         print(t("Ответы на читающие команды:", "Replies to the read commands:"))
         for response in probe.responses:
@@ -1242,6 +1255,9 @@ def cmd_status(args: argparse.Namespace) -> int:
                 "    вендорский канал: доступен только для чтения, см. mousecfg vendor",
                 "    vendor channel: read-only, see mousecfg vendor",
             ))
+        battery = device.get("battery_percent")
+        if isinstance(battery, int) and 0 <= battery <= 100:
+            print(t(f"    заряд: {battery}%", f"    battery: {battery}%"))
         if device.get("last_error"):
             print(t(f"    ошибка: {device['last_error']}", f"    error: {device['last_error']}"))
         for name, action in (device.get("buttons_plan") or {}).items():

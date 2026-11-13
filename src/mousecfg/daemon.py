@@ -21,6 +21,7 @@ from .input.actions import ActionError, parse_action
 from .input.detect import InputDeviceInfo, find_pointer_devices
 from .input.macros import parse_macros
 from .input.remapper import Remapper
+from .vendor import device as vendor_device
 
 logger = logging.getLogger(__name__)
 
@@ -30,6 +31,20 @@ RECONNECT_SECONDS = 1.0
 # Если event-узел мыши не нашёлся при подключении (ACL появился позже, узел
 # ещё не создан), пробуем поднять ремап заново с этой периодичностью.
 REMAP_RETRY_SECONDS = 5.0
+# Заряд мыши без HID++ читаем через вендорский канал раз в минуту: чаще
+# незачем, а hidraw при этом не занят.
+BATTERY_POLL_SECONDS = 60.0
+# Сколько последних измерений заряда храним для медианы. Байт заряда у
+# AJAZZ шумит на ±2%, поэтому без сглаживания значок в трее дрожал бы.
+BATTERY_HISTORY = 5
+
+
+def _smooth_battery(history: list[int], percent: int) -> int:
+    """Медиана последних измерений (устойчива к одиночным выбросам)."""
+    history.append(percent)
+    del history[:-BATTERY_HISTORY]
+    ordered = sorted(history)
+    return ordered[len(ordered) // 2]
 
 
 @dataclass
@@ -55,6 +70,15 @@ class DeviceRuntime:
     # Последняя ошибка связана с поиском event-узла (а не с профилями):
     # когда узел наконец находится, её можно просто очистить.
     input_error: bool = False
+    # Заряд мыши в процентах (вендорский канал, только чтение). None —
+    # ещё не читали или модель его не отдаёт.
+    battery_percent: int | None = None
+    battery_at: float = 0.0
+    # Последние измерения: заряд у этой модели шумит на ±2%, а сглаживание
+    # медианой не даёт значку в трее дёргаться на границах порогов.
+    battery_history: list[int] = field(default_factory=list)
+    # Вендорский узел (только чтение) — из него берём заряд.
+    vendor_path: str = ""
 
     @property
     def profile_ids(self) -> list[str]:
@@ -145,8 +169,33 @@ class Daemon:
         if self.watcher is not None and self.options.watch_apps:
             self._check_focus()
 
+        self._poll_batteries()
+
         if self.options.apply_buttons:
             self._retry_pending_remaps()
+
+    def _poll_batteries(self) -> None:
+        """Прочитать заряд мышей без HID++ через вендорский канал.
+
+        Только чтение (`30/a5`), раз в минуту. Ошибка не считается ошибкой
+        устройства: у узла может не быть ACL или модель вовсе не отдаёт заряд.
+        """
+        now = time.monotonic()
+        with self._lock:
+            runtimes = list(self.devices.values())
+        for runtime in runtimes:
+            if not runtime.vendor_path:
+                continue
+            if runtime.battery_at and now - runtime.battery_at < BATTERY_POLL_SECONDS:
+                continue
+            runtime.battery_at = now
+            percent = vendor_device.read_battery_percent(runtime.vendor_path)
+            if percent is None:
+                continue
+            smoothed = _smooth_battery(runtime.battery_history, percent)
+            if smoothed != runtime.battery_percent:
+                logger.info(t("%s: заряд %d%%", "%s: battery %d%%"), runtime.state.name, smoothed)
+            runtime.battery_percent = smoothed
 
     def _retry_pending_remaps(self) -> None:
         """Повторно поднять ремап там, где event-узел не нашёлся сразу.
@@ -311,6 +360,7 @@ class Daemon:
         self.state[key] = state
 
         runtime = DeviceRuntime(key=key, state=state)
+        runtime.vendor_path = mouse.vendor_path
         self._load_profile_set(runtime)
         self.devices[key] = runtime
 
@@ -592,6 +642,7 @@ class Daemon:
         data["report_rate_ms"] = runtime.report_rate_ms
         data["protocol"] = runtime.state.protocol
         data["capabilities"] = list(runtime.state.capabilities)
+        data["battery_percent"] = runtime.battery_percent
         data["lighting_supported"] = self._lighting_supported(runtime)
         if runtime.active_profile is not None:
             data["buttons_plan"] = engine.plan_button_actions(runtime.active_profile)

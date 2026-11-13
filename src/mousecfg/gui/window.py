@@ -187,6 +187,13 @@ class MainWindow(Adw.ApplicationWindow):
         self.mode_row.add_suffix(self.mode_badge)
         self.devices_group.add(self.mode_row)
 
+        self.battery_row = Adw.ActionRow(title=t("Заряд", "Battery"), subtitle="—")
+        self.battery_badge = Gtk.Label(label="—")
+        self.battery_badge.add_css_class("dim-label")
+        self.battery_row.add_suffix(self.battery_badge)
+        self.battery_row.set_visible(False)
+        self.devices_group.add(self.battery_row)
+
         self.dpi_row = Adw.SpinRow.new_with_range(100, 8000, 50)
         self.dpi_row.set_title(t("DPI (волатильно)", "DPI (volatile)"))
         self.dpi_row.set_subtitle(t("Меняется в оперативной памяти мыши; после отключения сбросится", "Changed in the mouse RAM; resets after disconnection"))
@@ -315,6 +322,17 @@ class MainWindow(Adw.ApplicationWindow):
             )
         else:
             self.mode_row.set_subtitle(str(device.get("name") or ""))
+
+        battery = device.get("battery_percent")
+        if isinstance(battery, int) and 0 <= battery <= 100:
+            self.battery_badge.set_text(f"{battery}%")
+            self.battery_row.set_subtitle(
+                t("Прочитано с мыши по вендорскому каналу (только чтение)",
+                  "Read from the mouse over the vendor channel (read-only)")
+            )
+            self.battery_row.set_visible(True)
+        else:
+            self.battery_row.set_visible(False)
 
         self._sync_settings(device)
         self.lighting_group.set_visible(bool(device.get("lighting_supported")))

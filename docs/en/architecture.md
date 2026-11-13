@@ -38,9 +38,11 @@ explanation; profiles, buttons and macros keep working.
 a separate HID interface (`usage page 0xFF01`, 64-byte reports); the daemon
 never opens it and it plays no part in profiles. On an explicit command
 (`mousecfg vendor`) the project reads the identification, the configuration
-(`parsers.py`: DPI levels, the active level, the report rate) and the raw
-replies of the read commands from there; `mousecfg get` adds what was read to
-the mouse card. Before every `os.write` the frame is checked by
+(`parsers.py`: DPI levels, the active level, the report rate), the battery and
+the factory codes, as well as the raw replies of the read commands from there;
+`mousecfg get` adds what was read to the mouse card. The daemon reads the
+battery once a minute and shows it in `status`, the tray and the window (the
+value is smoothed with a median: the byte fluctuates by ±2%). Before every `os.write` the frame is checked by
 `vendor/guard.py`: only the listed read commands are allowed, while write
 frames (including `0d 00`, which clears memory) are refused — the project never
 writes to onboard flash.

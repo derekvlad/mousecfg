@@ -24,8 +24,9 @@ daemon applies them again on reconnect.
   remapping and macros through evdev; DPI, report rate and lighting are set on
   the mouse itself. See what was found and what is available with `mousecfg list`;
 - the YJX vendor channel (AJAZZ 2.4G) is **read-only**: `mousecfg vendor`
-  shows the model, firmware build dates, the current DPI and report rate, and
-  `get` adds them to the mouse card; writes in this channel are refused by policy;
+  shows the model, firmware build dates, the current DPI, report rate and
+  battery; `get` adds them to the mouse card, and the battery is shown in the
+  tray and in the window; writes in this channel are refused by policy;
 - a `systemd --user` daemon: it finds the mouse, applies a profile on connect
   and switches profiles based on the focused application;
 - TOML profiles: DPI, report rate, buttons, macros, matching by serial number
