@@ -34,6 +34,9 @@ Mice without HID++ (AJAZZ 2.4G on the YJX controller, `a8a5:2255`).
 
 ### Changed
 
+- **`install.sh` updates the directory**: before installing it runs
+  `git pull --ff-only` (only when the tree is clean; `--no-pull` disables it).
+  Re-running `./install.sh` now installs the latest version from GitHub.
 - Project version: `0.3.0`.
 - udev rule fix: the interface number now comes from
   `ENV{ID_USB_INTERFACE_NUM}` (a condition with `ATTRS{bInterfaceNumber}`

@@ -77,25 +77,40 @@ cd mousecfg
 
 What the script does, step by step:
 
-1. installs system dependencies (GTK4/libadwaita, Python-GObject, evdev) via
+1. **updates the directory** to the latest version: `git pull --ff-only` if it
+   is a git clone without local changes (so it installs exactly what is on
+   GitHub);
+2. installs system dependencies (GTK4/libadwaita, Python-GObject, evdev) via
    your package manager (pacman/apt/dnf/zypper);
-2. creates a `.venv` with `--system-site-packages` and installs the package
+3. creates a `.venv` with `--system-site-packages` and installs the package
    from this directory;
-3. installs udev rules (it will ask for the `sudo` password — otherwise the
+4. installs udev rules (it will ask for the `sudo` password — otherwise the
    daemon cannot access the mouse);
-4. places a menu entry, a tray icon, the systemd unit and symlinks for the
+5. places a menu entry, a tray icon, the systemd unit and symlinks for the
    `mousecfg*` commands into `~/.local/bin`;
-5. enables and starts the daemon.
+6. enables and starts the daemon.
+
+So **running `./install.sh` again is the update** to the latest version. The
+script installs from the directory it lives in: a fresh clone gets the GitHub
+code (after `git pull`); a clone with local changes keeps those changes and is
+installed as is.
 
 Options:
 
 ```sh
+./install.sh              # update from git and install
+./install.sh --no-pull    # do not update the directory, install as is
 ./install.sh --dry-run    # only show what would be done
 ./install.sh --no-deps    # do not touch system packages
 ./install.sh --no-udev    # skip installing udev rules
 ./install.sh --no-start   # install but do not enable the daemon
 ./install.sh --uninstall  # remove the user part (udev rules must be removed manually)
 ```
+
+`git pull` runs only when the working tree is **clean** and only as
+`--ff-only`: your commits are never overwritten and no merges are performed. If
+there are uncommitted changes or the branch has diverged from `origin`, the
+script warns and installs the local version without touching anything.
 
 The script is idempotent: running it again breaks nothing. If something went
 wrong or you prefer a manual installation, the section below describes the same

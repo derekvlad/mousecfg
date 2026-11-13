@@ -2,17 +2,19 @@
 # mousecfg: установка «одной командой» для тех, кто не хочет разбираться.
 #
 # Скрипт делает всё, что можно сделать автоматически:
-#   1. ставит системные зависимости (GTK4/libadwaita, python-gobject, evdev);
-#   2. создаёт виртуальное окружение .venv и ставит пакет из этого каталога;
-#   3. ставит udev-правила (нужен root — спросит пароль);
-#   4. ставит значок в меню, иконку трея, systemd-юнит и симлинки команд;
-#   5. включает и запускает демон.
+#   1. обновляет каталог до последней версии (git pull --ff-only, если это клон);
+#   2. ставит системные зависимости (GTK4/libadwaita, python-gobject, evdev);
+#   3. создаёт виртуальное окружение .venv и ставит пакет из этого каталога;
+#   4. ставит udev-правила (нужен root — спросит пароль);
+#   5. ставит значок в меню, иконку трея, systemd-юнит и симлинки команд;
+#   6. включает и запускает демон.
 #
 # Ничего во встроенную память мыши не пишется: проект передаёт настройки
 # волатильными HID++-командами.
 #
 # Использование:
-#   ./install.sh                 # обычная установка
+#   ./install.sh                 # обычная установка (с обновлением из git)
+#   ./install.sh --no-pull       # не обновлять каталог, ставить как есть
 #   ./install.sh --no-deps       # не трогать системные пакеты
 #   ./install.sh --no-udev       # пропустить udev (если правила уже стоят)
 #   ./install.sh --no-start      # установить, но не включать демон
@@ -33,6 +35,7 @@ rules_dir="/etc/udev/rules.d"
 with_deps=1
 with_udev=1
 start_daemon=1
+pull_repo=1
 dry_run=0
 uninstall=0
 
@@ -72,6 +75,7 @@ while [ $# -gt 0 ]; do
         --no-deps)    with_deps=0 ;;
         --no-udev)    with_udev=0 ;;
         --no-start)   start_daemon=0 ;;
+        --no-pull)    pull_repo=0 ;;
         --dry-run)    dry_run=1 ;;
         --uninstall)  uninstall=1 ;;
         -h|--help)    usage ;;
@@ -160,7 +164,6 @@ step "Проверка окружения"
 command -v python3 >/dev/null 2>&1 || die "не найден python3"
 info "python3: $(python3 --version 2>&1)"
 info "каталог проекта: ${repo}"
-[ -f "${repo}/pyproject.toml" ] || die "не вижу pyproject.toml — запустите install.sh из корня репозитория"
 
 pm=$(detect_pm || true)
 if [ -n "${pm}" ]; then
@@ -173,6 +176,43 @@ if ! python3 -c 'import venv' >/dev/null 2>&1; then
     die "модуль venv недоступен. Debian/Ubuntu: sudo apt install python3-venv"
 fi
 ok "окружение готово"
+
+# --- 0.5. обновление до последней версии ------------------------------------
+
+if [ "$pull_repo" -eq 1 ]; then
+    step "Обновление до последней версии"
+    if [ ! -d "${repo}/.git" ]; then
+        info "каталог не является git-клоном — ставлю то, что есть (${repo})"
+    elif ! command -v git >/dev/null 2>&1; then
+        warn "git не найден — пропускаю обновление, ставлю локальную версию"
+    elif [ -n "$(git -C "${repo}" status --porcelain 2>/dev/null)" ]; then
+        # Локальные правки: не трогаем их молча — иначе git pull может
+        # отказаться или что-то слить. Ставим то, что есть, и говорим об этом.
+        warn "в ${repo} есть незакоммиченные изменения — обновление пропущено"
+        info "обновить вручную: git -C ${repo} stash && git -C ${repo} pull --ff-only"
+    else
+        branch=$(git -C "${repo}" rev-parse --abbrev-ref HEAD 2>/dev/null || printf 'HEAD')
+        before=$(git -C "${repo}" rev-parse --short HEAD 2>/dev/null || printf '?')
+        # --ff-only: только перемотка вперёд, никаких слияний и перезаписи
+        # вашей истории. При расхождении — предупреждаем и ставим как есть.
+        if run git -C "${repo}" pull --ff-only; then
+            after=$(git -C "${repo}" rev-parse --short HEAD 2>/dev/null || printf '?')
+            if [ "${before}" = "${after}" ]; then
+                ok "уже последняя версия (${branch} ${after})"
+            else
+                ok "обновлено ${before} → ${after} (${branch})"
+            fi
+        else
+            warn "не удалось обновиться (ветка разошлась с origin?) — ставлю локальную версию"
+        fi
+    fi
+else
+    info "обновление пропущено (--no-pull)"
+fi
+
+# Проверяем корень репозитория после возможного git pull: отставший клон
+# раньше получал ошибку «нет pyproject.toml», хотя обновление бы всё исправило.
+[ -f "${repo}/pyproject.toml" ] || die "не вижу pyproject.toml — запустите install.sh из корня репозитория"
 
 # --- 1. системные зависимости ----------------------------------------------
 
@@ -256,9 +296,11 @@ fi
 
 # --- итог --------------------------------------------------------------------
 
+installed_version=$("${venv}/bin/mousecfg" --version 2>/dev/null || printf 'mousecfg')
+
 cat <<EOF
 
-${c_ok}${c_bold}Готово!${c_reset}
+${c_ok}${c_bold}Готово!${c_reset}  (${installed_version})
 
   Запустить приложение:   mousecfg-gui
                           (или значок «mousecfg» в меню приложений)
@@ -268,6 +310,9 @@ ${c_ok}${c_bold}Готово!${c_reset}
 
 Если команда mousecfg не находится — откройте новый терминал или добавьте
 ${bin_dir} в PATH.
+
+Обновление до последней версии: снова запустите ./install.sh (он делает
+git pull --ff-only перед установкой) или `git pull` вручную.
 
 Первый запуск: мышь может быть в режиме On-Board. Чтобы настройки с хоста
 применялись, один раз переведите её в Host mode:
