@@ -43,9 +43,10 @@ memory.
   or application;
 - button remapping and macros via evdev/uinput — on the host side, the mouse
   knows nothing about them;
-- a GTK4/libadwaita app as a thin client of the daemon: the "Mouse memory"
-  group (for mice with a vendor channel) can write DPI into the mouse itself —
-  after a warning and with a snapshot taken before the write;
+- a GTK4/libadwaita app as a thin client of the daemon: mice are listed on the
+  left grouped by vendor, the settings of the selected one on the right; the
+  "Mouse memory" group (for mice with a vendor channel) can write DPI into the
+  mouse itself — after a warning and with a snapshot taken before the write;
 - a journal of every command sent and a feature allow-list;
 - a CLI.
 

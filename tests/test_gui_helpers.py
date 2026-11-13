@@ -172,3 +172,68 @@ def test_onboard_inactive_level_write_is_allowed() -> None:
     window.onboard_dpi_row.set_value(900.0)
 
     assert window.onboard_write_button.get_sensitive() is True
+
+
+# -- список устройств по производителям (референс: две панели) -----------
+
+
+def _device(usb_id, name, key, **extra):
+    base = {"key": key, "usb_id": usb_id, "name": name, "protocol": "evdev"}
+    return {**base, **extra}
+
+
+def test_vendor_of_known_and_unknown():
+    from mousecfg.gui.window import vendor_of
+
+    assert vendor_of(_device("046d:c092", "G102 LIGHTSYNC", "serial:1")) == "Logitech"
+    assert vendor_of(_device("a8a5:2255", "YJX-CHIP AJAZZ 2.4G", "serial:2")) == "AJAZZ"
+    assert vendor_of(_device("a8a4:2255", "AJAZZ 2.4G", "serial:3")) == "AJAZZ"
+    assert vendor_of(_device("1234:5678", "Some Mouse", "serial:4")) == "Другие устройства"
+    # Неизвестный vid, но в имени есть бренд.
+    assert vendor_of(_device("0000:0000", "Razer DeathAdder", "serial:5")) == "Razer"
+
+
+def test_group_devices_orders_vendors_and_keeps_members():
+    from mousecfg.gui.window import group_devices
+
+    devices = [
+        _device("a8a5:2255", "AJAZZ 2.4G", "serial:ajazz"),
+        _device("046d:c092", "G102", "serial:logi"),
+        _device("046d:c092", "G502", "serial:logi2"),
+        _device("9999:0001", "No-name", "serial:other"),
+    ]
+
+    groups = group_devices(devices)
+    names = [vendor for vendor, _ in groups]
+
+    assert names[0] == "Logitech"          # известный бренд раньше «Других»
+    assert "AJAZZ" in names
+    assert names[-1] == "Другие устройства"  # неизвестные — в конце
+    logitech = dict(groups)["Logitech"]
+    assert [item["key"] for item in logitech] == ["serial:logi", "serial:logi2"]
+
+
+def test_group_devices_empty():
+    from mousecfg.gui.window import group_devices
+
+    assert group_devices([]) == []
+
+
+def test_device_subtitle_reports_protocol_battery_profile():
+    from mousecfg.gui.window import device_subtitle
+
+    line = device_subtitle(_device("a8a5:2255", "AJAZZ 2.4G", "serial:x", battery_percent=78, active_profile="default"))
+
+    assert "a8a5:2255" in line
+    assert "evdev" in line
+    assert "78" in line
+    assert "default" in line
+
+
+def test_device_subtitle_without_battery():
+    from mousecfg.gui.window import device_subtitle
+
+    line = device_subtitle(_device("046d:c092", "G102", "serial:y", protocol="hidpp"))
+
+    assert "HID++" in line
+    assert "заряд" not in line

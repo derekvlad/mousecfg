@@ -126,10 +126,69 @@ def _parse_buttons_text(text: str) -> dict[str, object]:
     return buttons
 
 
+# Производитель по vid:pid → показываем в списке устройств и группируем по нему.
+# Неизвестные попадают в «Другие устройства».
+VENDORS: dict[str, str] = {
+    "046d": "Logitech",
+    "a8a5": "AJAZZ",
+    "a8a4": "AJAZZ",
+    "258a": "BY Tech",
+    "0c45": "SONiX",
+}
+
+_VENDOR_ORDER = ["Logitech", "AJAZZ", "Razer", "SteelSeries", "SONiX", "BY Tech"]
+# Названия брендов для распознавания по имени, когда vid неизвестен.
+_VENDOR_NAMES = ["Logitech", "AJAZZ", "Razer", "SteelSeries", "SONiX", "BY Tech", "YJX", "EWEADN"]
+
+
+def vendor_of(device: dict) -> str:
+    """Производитель мыши по `usb_id` (vid:pid). Неизвестный — по имени."""
+    usb_id = str(device.get("usb_id") or "")
+    vid = usb_id.split(":")[0].lower()
+    if vid in VENDORS:
+        return VENDORS[vid]
+    name = str(device.get("name") or "").lower()
+    for brand in _VENDOR_NAMES:
+        if brand.lower() in name:
+            return brand
+    return t("Другие устройства", "Other devices")
+
+
+def group_devices(devices: list[dict]) -> list[tuple[str, list[dict]]]:
+    """Сгруппировать мыши по производителю, сохранив порядок устройств.
+
+    Порядок групп — по `_VENDOR_ORDER`, остальные (включая «Другие») — в
+    конце, тоже в порядке появления.
+    """
+    groups: dict[str, list[dict]] = {}
+    for device in devices:
+        groups.setdefault(vendor_of(device), []).append(device)
+    known = [vendor for vendor in _VENDOR_ORDER if vendor in groups]
+    rest = [vendor for vendor in groups if vendor not in _VENDOR_ORDER]
+    return [(vendor, groups[vendor]) for vendor in [*known, *rest]]
+
+
+def device_subtitle(device: dict) -> str:
+    """Короткая строка под названием мыши в списке устройств."""
+    bits: list[str] = []
+    usb_id = str(device.get("usb_id") or "")
+    if usb_id:
+        bits.append(usb_id)
+    protocol = device.get("protocol")
+    bits.append("HID++" if protocol == "hidpp" else "evdev")
+    battery = device.get("battery_percent")
+    if isinstance(battery, int) and 0 <= battery <= 100:
+        bits.append(t(f"заряд {battery}%", f"battery {battery}%"))
+    active = device.get("active_profile")
+    if active:
+        bits.append(t(f"профиль {active}", f"profile {active}"))
+    return " · ".join(bits)
+
+
 class MainWindow(Adw.ApplicationWindow):
     def __init__(self, application: Adw.Application) -> None:
         super().__init__(application=application)
-        self.set_default_size(880, 620)
+        self.set_default_size(1040, 680)
 
         self.client = DaemonClient()
         self.devices: list[dict] = []
@@ -155,35 +214,138 @@ class MainWindow(Adw.ApplicationWindow):
 
     # -- построение интерфейса ------------------------------------------
     def _build_ui(self) -> None:
-        toolbar = Adw.ToolbarView()
         header = Adw.HeaderBar()
         header.set_title_widget(
-            Adw.WindowTitle(title="mousecfg", subtitle=t("профили на хосте, без записи в мышь", "profiles on the host, nothing written to the mouse"))
+            Adw.WindowTitle(
+                title=t("Настройки мыши", "Mouse settings"),
+                subtitle=t("профили на хосте; запись в память — только вручную", "profiles on the host; writing to memory is manual only"),
+            )
         )
 
         refresh_button = Gtk.Button(icon_name="view-refresh-symbolic", tooltip_text=t("Обновить", "Refresh"))
         refresh_button.connect("clicked", lambda *_: self._refresh())
         header.pack_start(refresh_button)
 
+        # -- левая панель: список устройств по производителям ------------
+        sidebar_toolbar = Adw.ToolbarView()
+        sidebar_toolbar.add_top_bar(Adw.HeaderBar())
+        sidebar_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        sidebar_box.append(self._build_device_list())
+        sidebar_box.append(self._build_footer())
+        sidebar_toolbar.set_content(sidebar_box)
+        self.sidebar_page = Adw.NavigationPage.new(sidebar_toolbar, t("Устройства", "Devices"))
+
+        # -- правая панель: настройки выбранной мыши ---------------------
         self.status_label = Gtk.Label(label=t("демон не найден", "daemon not found"), xalign=0)
         self.status_label.add_css_class("dim-label")
         self.status_label.set_margin_top(6)
         self.status_label.set_margin_bottom(6)
         self.status_label.set_margin_start(12)
         self.status_label.set_margin_end(12)
-        toolbar.add_top_bar(header)
+        content_toolbar = Adw.ToolbarView()
+        content_toolbar.add_top_bar(header)
+        content_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        content_box.append(self.status_label)
+        content_box.append(self._build_content())
+        content_toolbar.set_content(content_box)
+        self.content_page = Adw.NavigationPage.new(content_toolbar, t("Настройки", "Settings"))
+        self.content_page.set_can_pop(False)
 
-        content = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
-        content.append(self.status_label)
-        content.append(self._build_content())
-        toolbar.set_content(content)
+        self.split_view = Adw.NavigationSplitView()
+        self.split_view.set_min_sidebar_width(240)
+        self.split_view.set_max_sidebar_width(340)
+        self.split_view.set_sidebar(self.sidebar_page)
+        self.split_view.set_content(self.content_page)
 
-        self.toast_overlay = Adw.ToastOverlay(child=toolbar)
+        self.toast_overlay = Adw.ToastOverlay(child=self.split_view)
+        self.set_content(self.toast_overlay)
 
-        root = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
-        root.append(self.toast_overlay)
-        root.append(self._build_footer())
-        self.set_content(root)
+    def _build_device_list(self) -> Gtk.Widget:
+        """Сворачиваемые группы производителей со списком мышей.
+
+        Как в референсе: «Устройства» заголовком, ниже — строки-группы
+        (Logitech, AJAZZ, …), которые раскрываются в конкретные мыши.
+        """
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        box.set_margin_top(12)
+        box.set_margin_bottom(6)
+        box.set_margin_start(12)
+        box.set_margin_end(12)
+
+        title = Gtk.Label(label=t("Устройства", "Devices"), xalign=0)
+        title.add_css_class("title-4")
+        box.append(title)
+
+        self.devices_list = Gtk.ListBox()
+        self.devices_list.set_selection_mode(Gtk.SelectionMode.NONE)
+        self.devices_list.add_css_class("boxed-list")
+        box.append(self.devices_list)
+        self._device_rows: dict[str, Gtk.ListBoxRow] = {}
+        self._vendor_groups: dict[str, Adw.ExpanderRow] = {}
+        return box
+
+    def _render_device_list(self, devices: list[dict]) -> None:
+        """Перестроить список устройств по производителям."""
+        child = self.devices_list.get_first_child()
+        while child is not None:
+            nxt = child.get_next_sibling()
+            self.devices_list.remove(child)
+            child = nxt
+        self._device_rows = {}
+        self._vendor_groups = {}
+
+        if not devices:
+            empty = Gtk.ListBoxRow()
+            empty.set_activatable(False)
+            empty.set_child(Gtk.Label(label=t("мышей нет", "no mice"), xalign=0))
+            self.devices_list.append(empty)
+            return
+
+        for vendor, group in group_devices(devices):
+            expander = Adw.ExpanderRow(title=vendor)
+            expander.set_subtitle(t(f"{len(group)} под управлением", f"{len(group)} managed"))
+            for device in group:
+                row = Adw.ActionRow(
+                    title=str(device.get("name") or device.get("key") or "?"),
+                    subtitle=device_subtitle(device),
+                )
+                row.set_activatable(True)
+                row.add_prefix(Gtk.Image.new_from_icon_name("input-mouse-symbolic"))
+                key = str(device.get("key") or "")
+                row.connect("activated", self._on_device_selected, key)
+                self._device_rows[key] = row
+                expander.add_row(row)
+            # Раскрываем группу, если в ней выбранная мышь (или если она одна).
+            by_key = {str(item.get("key") or "") for item in group}
+            expander.set_expanded(self.device_key in by_key or len(group) == 1)
+            self._vendor_groups[vendor] = expander
+            self.devices_list.append(expander)
+
+    def _on_device_selected(self, _row: Adw.ActionRow, key: str) -> None:
+        if not key or key == self.device_key:
+            return
+        self.device_key = key
+        self._mark_selected_device()
+        if self.split_view.get_collapsed():
+            self.split_view.set_show_content(True)
+        device = next((item for item in self.devices if str(item.get("key")) == key), None)
+        if device is not None:
+            self._render_device(device)
+
+    def _mark_selected_device(self) -> None:
+        """Подсветить выбранную мышь и раскрыть её группу."""
+        for key, row in self._device_rows.items():
+            if key == self.device_key:
+                row.add_css_class("accent")
+            else:
+                row.remove_css_class("accent")
+        selected = next((item for item in self.devices if str(item.get("key")) == self.device_key), None)
+        if selected is None:
+            return
+        vendor = vendor_of(selected)
+        for name, expander in self._vendor_groups.items():
+            if name == vendor:
+                expander.set_expanded(True)
 
     def _build_content(self) -> Gtk.Widget:
         self.devices_group = Adw.PreferencesGroup(
@@ -276,10 +438,11 @@ class MainWindow(Adw.ApplicationWindow):
         footer.set_margin_end(12)
         label = Gtk.Label(
             label=t(
-                "Настройки профиля живут в оперативной памяти мыши. Группа «Память мыши» — единственное место, где можно записать настройки в саму мышь (со снимком до записи).",
-                "Profile settings live in the mouse RAM. The “Mouse memory” group is the only place where settings can be written into the mouse itself (with a snapshot taken before the write).",
+                "Профиль живёт в памяти хоста. Запись в саму мышь — только в группе «Память мыши», со снимком до записи.",
+                "A profile lives in the host RAM. Writing into the mouse itself happens only in the “Mouse memory” group, with a snapshot taken first.",
             ),
             xalign=0,
+            wrap=True,
         )
         label.add_css_class("dim-label")
         footer.append(label)
@@ -310,11 +473,24 @@ class MainWindow(Adw.ApplicationWindow):
         self.status_label.set_text(t(f"активное приложение: {focused}  ·  источник: {watcher}", f"focused application: {focused}  ·  source: {watcher}"))
 
         if not self.devices:
+            self._render_device_list([])
             self._on_error(t("нет устройств под управлением", "no managed devices"))
             return
 
-        device = self.devices[0]
-        self.device_key = str(device.get("key") or "")
+        # Держим выбранную мышь, если она ещё подключена; иначе первую.
+        keys = {str(item.get("key") or "") for item in self.devices}
+        if self.device_key not in keys:
+            self.device_key = str(self.devices[0].get("key") or "")
+        self._render_device_list(self.devices)
+        self._mark_selected_device()
+        device = next(
+            (item for item in self.devices if str(item.get("key")) == self.device_key),
+            self.devices[0],
+        )
+        self._render_device(device)
+
+    def _render_device(self, device: dict) -> None:
+        """Правая панель: карточка и настройки одной мыши."""
         capabilities = set(device.get("capabilities") or [])
         protocol = str(device.get("protocol") or "hidpp")
         self.dpi_row.set_sensitive("dpi" in capabilities)
@@ -420,11 +596,19 @@ class MainWindow(Adw.ApplicationWindow):
         self.onboard_write_button.add_css_class("suggested-action")
         self.onboard_write_button.set_sensitive(False)
         self.onboard_write_button.connect("clicked", lambda *_: self._on_onboard_write())
+        write_row = Adw.ActionRow()
+        self.onboard_write_button.set_hexpand(True)
+        write_row.set_child(self.onboard_write_button)
+        self.onboard_group.add(write_row)
 
-        buttons_row = Adw.ActionRow(title=t("Действия", "Actions"))
-        for button in (self.onboard_backup_button, self.onboard_restore_button, self.onboard_write_button):
-            buttons_row.add_suffix(button)
-        self.onboard_group.add(buttons_row)
+        actions = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        actions.add_css_class("linked")
+        actions.set_halign(Gtk.Align.START)
+        actions.append(self.onboard_backup_button)
+        actions.append(self.onboard_restore_button)
+        actions_row = Adw.ActionRow(title=t("Снимки", "Snapshots"))
+        actions_row.add_suffix(actions)
+        self.onboard_group.add(actions_row)
 
     def _render_onboard_group(self, device: dict) -> None:
         onboard = device.get("onboard")

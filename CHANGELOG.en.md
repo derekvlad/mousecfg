@@ -9,6 +9,9 @@ Mice without HID++ (AJAZZ 2.4G on the YJX controller, `a8a5:2255`).
 
 ### Added
 
+- **Two-pane interface**: mice listed on the left grouped by vendor (Logitech,
+  AJAZZ, …) with collapsible groups, the card and settings of the selected one
+  on the right.
 - **Discovery of mice without HID++** (`discovery`): the interfaces of one
   device are grouped, the protocol is decided by the interface, and the evdev
   node is found via `capabilities`. Touchpads and keyboards with a "mouse" node
