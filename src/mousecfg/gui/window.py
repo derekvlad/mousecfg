@@ -519,8 +519,10 @@ class MainWindow(Adw.ApplicationWindow):
         if isinstance(battery, int) and 0 <= battery <= 100:
             self.battery_badge.set_text(f"{battery}%")
             self.battery_row.set_subtitle(
-                t("Прочитано с мыши по вендорскому каналу (только чтение)",
-                  "Read from the mouse over the vendor channel (read-only)")
+                t("Прочитано с мыши по вендорскому каналу (только чтение). "
+                  "Прошивка отдаёт заряд грубо (шаг ~2%), точность ограничена",
+                  "Read from the mouse over the vendor channel (read-only). "
+                  "The firmware reports a coarse value (step ~2%), precision is limited")
             )
             self.battery_row.set_visible(True)
         else:

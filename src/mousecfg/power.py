@@ -29,7 +29,25 @@ def battery_display(percent: object) -> tuple[str, str] | None:
     return t(f"заряд: {percent}%", f"battery: {percent}%"), icon
 
 
-def hover_title(name: str = "", profile: str = "", percent: object = None) -> str:
+def battery_note(percent: object) -> str | None:
+    """Пояснение к числу: прошивка отдаёт заряд грубо.
+
+    У мышей без HID++ (AJAZZ 2.4G) байт заряда меняется шагом ~2% и может
+    подолгу стоять на 98–100% даже при активной работе от батареи. Значение
+    честное (то же отдаёт штатный веб-инструмент), но огрублённое, поэтому
+    рядом уместна оговорка, а не «точность до процента».
+    """
+    if battery_display(percent) is None:
+        return None
+    return t(
+        f"прошивка сообщает {percent}%, точность ограничена",
+        f"firmware reports {percent}%, precision is limited",
+    )
+
+
+def hover_title(
+    name: str = "", profile: str = "", percent: object = None, note: str = ""
+) -> str:
     """Текст всплывающей подсказки значка трея.
 
     Панели (в частности noctalia) показывают `Title` элемента
@@ -44,7 +62,9 @@ def hover_title(name: str = "", profile: str = "", percent: object = None) -> st
     parts.append(battery)
     if name:
         parts.append(name)
+    if note:
+        parts.append(note)
     return " · ".join(parts)
 
 
-__all__ = ["battery_display", "hover_title"]
+__all__ = ["battery_display", "battery_note", "hover_title"]

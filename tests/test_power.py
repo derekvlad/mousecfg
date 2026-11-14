@@ -62,3 +62,38 @@ def test_hover_title_skips_empty_name() -> None:
     title = hover_title(name="", profile="default", percent=50)
 
     assert title == "mousecfg · default · заряд: 50%"
+
+
+def test_battery_note_mentions_limited_precision() -> None:
+    from mousecfg.power import battery_note
+
+    note = battery_note(98)
+
+    assert note is not None
+    assert "98" in note
+    assert "точность" in note
+
+
+@pytest.mark.parametrize("value", [None, "", 101, -1, True, 1.5, []])
+def test_battery_note_is_none_without_reading(value: object) -> None:
+    from mousecfg.power import battery_note
+
+    assert battery_note(value) is None
+
+
+def test_hover_title_adds_note_when_given() -> None:
+    from mousecfg.power import battery_note, hover_title
+
+    note = battery_note(100)
+    title = hover_title(name="Mouse", profile="default", percent=100, note=note or "")
+
+    assert "заряд: 100%" in title
+    assert "точность" in title
+
+
+def test_hover_title_without_note_stays_unchanged() -> None:
+    from mousecfg.power import hover_title
+
+    title = hover_title(name="Mouse", profile="default", percent=100, note="")
+
+    assert title == "mousecfg · default · заряд: 100% · Mouse"

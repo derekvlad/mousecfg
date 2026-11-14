@@ -10,6 +10,9 @@ Format: significant changes per version. Protocol details live in
 - Link for optional project support (Boosty) — in `README.md`,
   `README.en.md` and a "Sponsor" button via `.github/FUNDING.yml`. Features
   stay free; donating is entirely optional.
+- A note on battery precision: for mice without HID++ the firmware reports the
+  value coarsely (~2% steps, often 98–100% even on battery), so the tray tooltip
+  and the GUI card add "precision is limited".
 
 ## 0.3.0
 

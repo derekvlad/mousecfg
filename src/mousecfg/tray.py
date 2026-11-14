@@ -30,7 +30,7 @@ gi.require_version("AppIndicator3", "0.1")
 from gi.repository import AppIndicator3, GLib, Gtk  # noqa: E402
 
 from mousecfg import hotkeys, ipc  # noqa: E402
-from mousecfg.power import battery_display, hover_title  # noqa: E402
+from mousecfg.power import battery_display, battery_note, hover_title  # noqa: E402
 
 logger = logging.getLogger(__name__)
 
@@ -196,12 +196,16 @@ class Tray:
 
         Панели (в частности noctalia) показывают `Title` этого
         StatusNotifierItem, поэтому заряд кладём именно туда:
-        `mousecfg · default · заряд 78% · <устройство>`.
+        `mousecfg · default · заряд 78% · <устройство>`. У мышей без HID++
+        прошивка отдаёт заряд грубо, поэтому добавляем оговорку о точности.
         """
+        percent = device.get("battery_percent")
+        note = battery_note(percent) or ""
         title = hover_title(
             name=str(device.get("name") or device.get("key") or ""),
             profile=active,
-            percent=device.get("battery_percent"),
+            percent=percent,
+            note=note,
         )
         self.indicator.set_title(title)
 

@@ -137,9 +137,16 @@ A live run of `mousecfg vendor --probe` on this mouse. All replies are read-only
 | Factory codes `08/a5` | pages 5..6: `20250903170105-3299-3311` | a printable string; the first 14 digits are a date/time `2025-09-03 17:01:05`, followed by two code groups. The meaning of the groups is unconfirmed |
 
 A note on the battery: the byte fluctuates by ±2% between adjacent polls, so the
-daemon keeps the last 5 values and shows the median — otherwise the tray icon
-would flicker across the thresholds. For the same models the SDK calls command
-`0x30` "battery and USB", and the 0..100 range is the only sensible reading.
+daemon keeps the previous value as long as the new one differs by at most 2%, and
+accepts a clear change immediately (debounce, with no minutes-long lag). For the
+same models the SDK calls command `0x30` "battery and USB", and the 0..100 range
+is the only sensible reading.
+
+Precision is limited by the firmware itself: the value changes in steps of ~2%
+and can sit at 98–100% for a long time even under active battery use. It is
+honest — the stock AJAZZ web tool shows the same tier ("Sufficient power") — but
+coarse, so both the tray tooltip and the GUI card carry a "precision is limited"
+note next to the number.
 
 The battery is shown in the tray: in the menu as a "battery: N%" row and in the
 hover tooltip. The panel takes the tooltip from the `Title` property of the
