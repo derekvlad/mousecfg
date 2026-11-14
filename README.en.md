@@ -6,6 +6,7 @@
 [![Python](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/)
 [![Platform](https://img.shields.io/badge/platform-Linux-informational.svg)](#)
 [![Never writes onboard memory](https://img.shields.io/badge/onboard%20memory-never%20written-success.svg)](#checks-that-nothing-is-written-to-flash)
+[![Support: Boosty](https://img.shields.io/badge/support-Boosty-ff6a00.svg)](https://boosty.to/mousecfg)
 
 Gaming mouse control on Linux where **profiles live on the host**, not in the
 mouse memory.
@@ -517,6 +518,14 @@ python3 scripts/capture-hid.py -- python3 -m mousecfg set-dpi 1600   # frame jou
 python3 scripts/replug-test.py                                      # volatility check
 PYTHONPATH=src python3 scripts/evdev-selftest.py                    # remap without a real mouse
 ```
+
+## Support the project
+
+The project is developed on a volunteer basis. If mousecfg has been useful and
+you would like to support further development, it is entirely optional — no paid
+access to features is implied:
+
+[**boosty.to/mousecfg**](https://boosty.to/mousecfg)
 
 ## Licence
 

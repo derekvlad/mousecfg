@@ -6,6 +6,7 @@
 [![Python](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/)
 [![Platform](https://img.shields.io/badge/platform-Linux-informational.svg)](#)
 [![Не пишет во флеш мыши](https://img.shields.io/badge/onboard%20memory-never%20written-success.svg)](#проверки-во-флеш-ничего-не-пишется)
+[![Поддержать: Boosty](https://img.shields.io/badge/%D0%BF%D0%BE%D0%B4%D0%B4%D0%B5%D1%80%D0%B6%D0%B0%D1%82%D1%8C-Boosty-ff6a00.svg)](https://boosty.to/mousecfg)
 
 Управление игровыми мышами в Linux, где **профили живут на хосте**, а не в памяти мыши.
 
@@ -531,6 +532,14 @@ python3 scripts/capture-hid.py -- python3 -m mousecfg set-dpi 1600   # журн�
 python3 scripts/replug-test.py                                      # проверка волатильности
 PYTHONPATH=src python3 scripts/evdev-selftest.py                    # ремап без реальной мыши
 ```
+
+## Поддержать проект
+
+Проект развивается на общественных началах. Если mousecfg оказался полезен и
+хочется поддержать дальнейшую разработку — это сугубо по желанию, никакой
+платный доступ к функциям не подразумевается:
+
+[**boosty.to/mousecfg**](https://boosty.to/mousecfg)
 
 ## Лицензия
 

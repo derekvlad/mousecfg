@@ -3,6 +3,14 @@
 Format: significant changes per version. Protocol details live in
 `docs/en/device-matrix.md`, writing to memory in `docs/en/onboard.md`.
 
+## Unreleased
+
+### Added
+
+- Link for optional project support (Boosty) — in `README.md`,
+  `README.en.md` and a "Sponsor" button via `.github/FUNDING.yml`. Features
+  stay free; donating is entirely optional.
+
 ## 0.3.0
 
 Mice without HID++ (AJAZZ 2.4G on the YJX controller, `a8a5:2255`).
