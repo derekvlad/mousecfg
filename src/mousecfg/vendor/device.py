@@ -299,6 +299,17 @@ def read_battery_percent(path: str, *, timeout: float = 0.8) -> int | None:
     подходит для периодического опроса. Ничего не пишет и не бросает
     исключений при недоступном узле — просто возвращает None.
     """
+    state = read_battery(path, timeout=timeout)
+    return state[0] if state is not None else None
+
+
+def read_battery(path: str, *, timeout: float = 0.8) -> tuple[int | None, bool | None] | None:
+    """Прочитать заряд и флаг зарядки (`30/a5`) одним кадром.
+
+    Возвращает ``(percent, charging)``; любое поле может быть None, если
+    прошивка его не отдала. None целиком — узел недоступен или это не
+    `mkespn`. Ошибки не пробрасываются: демон просто пропустит опрос.
+    """
     try:
         with VendorDevice(path, timeout=timeout) as device:
             dialect = device.detect_dialect()
@@ -309,7 +320,8 @@ def read_battery_percent(path: str, *, timeout: float = 0.8) -> int | None:
         return None
     if reply is None:
         return None
-    return parse_session_state(reply).percent
+    state = parse_session_state(reply)
+    return state.percent, state.charging
 
 
 __all__ = [
@@ -320,5 +332,6 @@ __all__ = [
     "VendorRefused",
     "VendorResponse",
     "VendorTransportError",
+    "read_battery",
     "read_battery_percent",
 ]

@@ -33,7 +33,8 @@ memory.
 - the YJX vendor channel (AJAZZ 2.4G) is **read-only by default**: `mousecfg
   vendor` shows the model, firmware build dates, DPI, report rate and battery;
   `get` adds them to the mouse card, and the battery is shown in the tray and
-  in the window;
+  in the window; when it runs low the daemon sends one desktop notification
+  ("mouse battery low"), honouring the charging flag;
 - separate `mousecfg onboard` commands write settings into the mouse memory
   (DPI, report rate, lighting, etc.) — only with `--allow-onboard-write`, with
   a warning on first connect, and with a **mandatory snapshot** before every

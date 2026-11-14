@@ -13,6 +13,10 @@ Format: significant changes per version. Protocol details live in
 - A note on battery precision: for mice without HID++ the firmware reports the
   value coarsely (~2% steps, often 98–100% even on battery), so the tray tooltip
   and the GUI card add "precision is limited".
+- Low-battery warning: once per discharge the daemon sends a desktop
+  notification ("mouse battery low") when the charge drops to 15%. The charging
+  flag is honoured: on the cable nothing is shown and the counter re-arms.
+  `mousecfg status` now marks "(charging)".
 
 ## 0.3.0
 

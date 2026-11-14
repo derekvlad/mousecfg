@@ -420,6 +420,21 @@ def test_parse_session_state_rejects_out_of_range_value() -> None:
     assert state.first_byte == 0xFF
 
 
+def test_parse_session_state_reads_charging_flag() -> None:
+    # SDK того же контроллера: байт 8 — заряд, байт 9 — флаг зарядки.
+    on_cable = parsers.parse_session_state(_reply_with_data(0x30, 0xA5, b"\x64\x01" + bytes(8)))
+    off_cable = parsers.parse_session_state(_reply_with_data(0x30, 0xA5, b"\x64\x00" + bytes(8)))
+
+    assert on_cable.charging is True
+    assert off_cable.charging is False
+
+
+def test_parse_session_state_charging_is_none_without_reply() -> None:
+    empty = parsers.parse_session_state(_reply_with_data(0x30, 0xA5, b""))
+
+    assert empty.charging is None
+
+
 def test_parse_info_block_joins_pages_and_finds_timestamp() -> None:
     page5 = bytes.fromhex(
         "ff ff ff ff ff ff ff 01"

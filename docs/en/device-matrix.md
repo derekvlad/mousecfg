@@ -133,7 +133,7 @@ A live run of `mousecfg vendor --probe` on this mouse. All replies are read-only
 | Identification `03/00` | `YJX.co.mouse` `271220` `Nov 12 2025 18:49:27` `Feb 20 2024 20:18:19` | model `YJX.co.mouse`, code `271220`, two firmware build dates |
 | Configuration `0e/a5` | `00 00 04 06 05 90 01 20 03 b0 04 40 06 60 09 80 0c …` | 6 DPI levels: **400 / 800 / 1200 / 1600 / 2400 / 3200**, current **2400**, report rate **1000 Hz** (code `04`), lighting off (`00`) |
 | Serial `fa/ae` | eight zero bytes | not populated on this model |
-| Battery `30/a5` | 10 bytes, the first one varies (`4b`…`52`) | the first byte is the **charge percentage** (0..100); it is in sync with byte 46 of the `0e/a5` reply. The SDK for the same controller calls command `0x30` "battery + USB" |
+| Battery `30/a5` | 10 bytes, the first one varies (`4b`…`52`) | the first byte is the **charge percentage** (0..100); it is in sync with byte 46 of the `0e/a5` reply. The second byte is the **charging flag** (`1` — the mouse is on the cable). The SDK for the same controller calls command `0x30` "battery + USB" |
 | Factory codes `08/a5` | pages 5..6: `20250903170105-3299-3311` | a printable string; the first 14 digits are a date/time `2025-09-03 17:01:05`, followed by two code groups. The meaning of the groups is unconfirmed |
 
 A note on the battery: the byte fluctuates by ±2% between adjacent polls, so the
@@ -147,6 +147,12 @@ and can sit at 98–100% for a long time even under active battery use. It is
 honest — the stock AJAZZ web tool shows the same tier ("Sufficient power") — but
 coarse, so both the tray tooltip and the GUI card carry a "precision is limited"
 note next to the number.
+
+The daemon polls the battery every 30 seconds and, once the charge drops to 15%
+(while the mouse is not on the cable), sends a single desktop notification via
+`notify-send`. It will fire again only after the charge rises above 25% again or
+the mouse is unplugged from the cable. `notify-send` is a soft dependency: when
+it is missing the daemon just logs a warning.
 
 The battery is shown in the tray: in the menu as a "battery: N%" row and in the
 hover tooltip. The panel takes the tooltip from the `Title` property of the

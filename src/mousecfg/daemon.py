@@ -14,7 +14,7 @@ import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
-from . import appwatch, config, consent, discovery, engine, ipc, onboard_consent, profiles, registry, session
+from . import appwatch, config, consent, discovery, engine, ipc, notice, onboard_consent, profiles, registry, session
 from .hidpp.protocol import ProtocolError, TransportError
 from .i18n import t
 from .input.actions import ActionError, parse_action
@@ -86,6 +86,10 @@ class DeviceRuntime:
     # ещё не читали или модель его не отдаёт.
     battery_percent: int | None = None
     battery_at: float = 0.0
+    # Флаг зарядки (мышь на кабеле); None — прошивка его не отдала.
+    battery_charging: bool | None = None
+    # Отслеживание «пора предупредить о низком заряде».
+    battery_monitor: notice.LowBatteryMonitor = field(default_factory=notice.LowBatteryMonitor)
     # Вендорский узел (только чтение) — из него берём заряд.
     vendor_path: str = ""
     # Уровни DPI, прочитанные из памяти мыши (вендорский канал).
@@ -190,6 +194,8 @@ class Daemon:
 
         Только чтение (`30/a5`), раз в 30 секунд. Ошибка не считается ошибкой
         устройства: у узла может не быть ACL или модель вовсе не отдаёт заряд.
+        Если заряд опустился до порога, отправляем уведомление рабочего стола
+        (один раз на разрядку; снятие с зарядки взводит его заново).
         """
         now = time.monotonic()
         with self._lock:
@@ -200,13 +206,27 @@ class Daemon:
             if runtime.battery_at and now - runtime.battery_at < BATTERY_POLL_SECONDS:
                 continue
             runtime.battery_at = now
-            percent = vendor_device.read_battery_percent(runtime.vendor_path)
+            reading = vendor_device.read_battery(runtime.vendor_path)
+            if reading is None:
+                continue
+            percent, charging = reading
             if percent is None:
                 continue
+            runtime.battery_charging = charging
             smoothed = _smooth_battery(runtime.battery_percent, percent)
             if smoothed != runtime.battery_percent:
                 logger.info(t("%s: заряд %d%%", "%s: battery %d%%"), runtime.state.name, smoothed)
             runtime.battery_percent = smoothed
+            self._warn_low_battery(runtime)
+
+    def _warn_low_battery(self, runtime: DeviceRuntime) -> None:
+        """Один раз предупредить о низком заряде (уважая флаг зарядки)."""
+        warning = runtime.battery_monitor.update(runtime.battery_percent, runtime.battery_charging)
+        if warning is None:
+            return
+        title, body = warning
+        logger.warning(t("%s: %s", "%s: %s"), runtime.state.name, body)
+        notice.notify(title, body, urgency="critical")
 
     def _retry_pending_remaps(self) -> None:
         """Повторно поднять ремап там, где event-узел не нашёлся сразу.
@@ -676,6 +696,7 @@ class Daemon:
         data["protocol"] = runtime.state.protocol
         data["capabilities"] = list(runtime.state.capabilities)
         data["battery_percent"] = runtime.battery_percent
+        data["battery_charging"] = runtime.battery_charging
         data["lighting_supported"] = self._lighting_supported(runtime)
         data["onboard"] = {
             "vendor_path": runtime.vendor_path,

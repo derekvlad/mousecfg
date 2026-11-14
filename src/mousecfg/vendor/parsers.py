@@ -99,6 +99,18 @@ class SessionState:
         value = self.first_byte
         return value if 0 <= value <= 100 else None
 
+    @property
+    def charging(self) -> bool | None:
+        """Флаг зарядки (второй байт ответа `30/a5`).
+
+        SDK того же контроллера читает заряд из байта 8, а флаг зарядки — из
+        байта 9 (`battery_value` / `charge_flag`). True — мышь на кабеле.
+        None — ответа нет или он слишком короткий.
+        """
+        if len(self.data.replace(" ", "")) < 4:
+            return None
+        return int(self.data.replace(" ", "")[2:4], 16) != 0
+
 
 @dataclass
 class InfoBlock:

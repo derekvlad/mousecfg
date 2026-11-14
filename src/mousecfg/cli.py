@@ -1623,7 +1623,11 @@ def cmd_status(args: argparse.Namespace) -> int:
             ))
         battery = device.get("battery_percent")
         if isinstance(battery, int) and 0 <= battery <= 100:
-            print(t(f"    заряд: {battery}%", f"    battery: {battery}%"))
+            charging = device.get("battery_charging")
+            if charging:
+                print(t(f"    заряд: {battery}% (на зарядке)", f"    battery: {battery}% (charging)"))
+            else:
+                print(t(f"    заряд: {battery}%", f"    battery: {battery}%"))
         if device.get("last_error"):
             print(t(f"    ошибка: {device['last_error']}", f"    error: {device['last_error']}"))
         for name, action in (device.get("buttons_plan") or {}).items():
